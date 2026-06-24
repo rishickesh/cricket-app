@@ -65,7 +65,8 @@ st.markdown("""
 # ==========================================
 @st.cache_data
 def load_and_clean_dataset(file_path):
-    df = pd.read_csv(file_path, low_memory=False)
+    # Changed from pd.read_csv to pd.read_parquet
+    df = pd.read_parquet(file_path)
     
     df['Batter'] = df['Batter'].astype(str).str.strip()
     df['Bowler'] = df['Bowler'].astype(str).str.strip()
@@ -97,9 +98,10 @@ def load_and_clean_dataset(file_path):
     return df
 
 try:
-    df = load_and_clean_dataset("T20 Full Ball-by-Ball Data.csv")
+    # Pointed to your newly optimized parquet file
+    df = load_and_clean_dataset("optimized_data.parquet")
 except FileNotFoundError:
-    st.error("🚨 File 'T20 Full Ball-by-Ball Data.csv' not found.")
+    st.error("🚨 File 'optimized_data.parquet' not found.")
     st.stop()
 
 
