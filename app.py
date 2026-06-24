@@ -568,21 +568,23 @@ with tab_matchup:
             t_dots = int(tgt_df[(tgt_df['Runs'] == 0) & (tgt_df['Is_Bowler_Wicket'] == False)].shape[0])
             dot_pct = (t_dots / max(t_balls, 1)) * 100
 
-            sample_warning = (
-                "<p style='color:#f0a830;font-size:11px;margin:4px 0 0 0;'>⚠️ Small sample — treat with caution.</p>"
-                if t_balls < 10 else ""
-            )
-
-            st.markdown(
-                f"""
-                <div style='background-color:#161b22;padding:18px;border-radius:8px;border:1px solid #30363d;'>
-                    <h3 style='margin:0 0 2px 0;font-size:16px;'>⚔️ {focus_batter}</h3>
-                    <p style='margin:0;color:#8b949e;font-size:12px;'>vs&nbsp;<span style='color:#c9d1d9;font-weight:bold;'>{focus_bowler}</span></p>
-                    {sample_warning}
-                    <hr style='border-color:#30363d;margin:12px 0;'/>
-                """,
-                unsafe_allow_html=True
-            )
+            # Wrap the card contents nicely inside a clean, closed container
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div style='background-color:#161b22;padding:18px;border-radius:8px;border:1px solid #30363d;margin-bottom:15px;'>
+                        <h3 style='margin:0 0 2px 0;font-size:16px;'>⚔️ {focus_batter}</h3>
+                        <p style='margin:0;color:#8b949e;font-size:12px;'>vs&nbsp;<span style='color:#c9d1d9;font-weight:bold;'>{focus_bowler}</span></p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                # Check sample size natively using Streamlit's warning component
+                if t_balls < 10:
+                    st.warning("⚠️ Small sample — treat with caution.")
+                
+                st.markdown("---") # Clean markdown horizontal rule replacing the raw HTML <hr>
 
             m1, m2, m3 = st.columns(3)
             m1.metric("Runs", t_runs)
