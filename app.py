@@ -519,63 +519,55 @@ with tab_venue:
             m_id_col = 'Match' if 'Match' in v_df.columns else None
 
         # Default initialization values
+        # Default initialization values
         avg_1st_inn = 0.0
         avg_winning_score = 0.0
         chasing_win_pct = 50.0  
         
-        if m_id_col:
+        # We know 'Unique_Match_ID' is your definitive match identifier
+        m_id_col = 'Unique_Match_ID' if 'Unique_Match_ID' in v_df.columns else ('Match' if 'Match' in v_df.columns else None)
+
+        if m_id_col and 'Innings' in v_df.columns:
             # Create a clean dataframe copy to calculate team match totals safely
             score_df = v_df.copy()
             extra_col = 'Bowler Extra Runs' if 'Bowler Extra Runs' in score_df.columns else ('Extra Runs' if 'Extra Runs' in score_df.columns else 'Runs')
             score_df['Ball_Total_Runs'] = score_df['Runs'] + score_df[extra_col]
             
-            # --- Deduplicate ball rows per match using composite key to prevent inflated run tallies ---
+            # --- Deduplicate ball rows per match using your exact identifier ---
             ball_identifiers = [m_id_col, 'Innings', 'Over', 'Ball']
             ball_identifiers = [col for col in ball_identifiers if col in score_df.columns]
-            
             if len(ball_identifiers) >= 3:
                 score_df = score_df.drop_duplicates(subset=ball_identifiers)
             
             # 1. Calculate clean Average Innings Scores
-            if 'Innings' in score_df.columns:
-                innings_totals = score_df.groupby([m_id_col, 'Innings'])['Ball_Total_Runs'].sum().reset_index()
-                inn1_scores = innings_totals[innings_totals['Innings'] == 1]
-                if not inn1_scores.empty:
-                    avg_1st_inn = inn1_scores['Ball_Total_Runs'].mean()
+            innings_totals = score_df.groupby([m_id_col, 'Innings'])['Ball_Total_Runs'].sum().reset_index()
             
-            # 2. Extract Unique Match Metadata rows to calculate Chasing Win %
-            unique_matches = v_df.drop_duplicates(subset=[m_id_col]).copy()
-            total_mapped_matches = len(unique_matches)
+            inn1_scores = innings_totals[innings_totals['Innings'] == 1]
+            if not inn1_scores.empty:
+                avg_1st_inn = inn1_scores['Ball_Total_Runs'].mean()
             
-            if total_mapped_matches > 0 and 'Winning Team' in unique_matches.columns and 'Batting Team' in unique_matches.columns:
-                # Map out which team batted in which innings using the original dataframe
-                match_inn_map = v_df.groupby([m_id_col, 'Innings'])['Batting Team'].first().unstack(level='Innings').reset_index()
-                unique_matches = unique_matches.merge(match_inn_map, on=m_id_col, how='left')
+            # 2. Re-architect Chasing Win % and Avg Winning Score without missing columns
+            # Pivot to get Innings 1 and Innings 2 totals side-by-side per match
+            match_pivot = innings_totals.pivot(index=m_id_col, columns='Innings', values='Ball_Total_Runs').dropna(subset=[1, 2])
+            total_mapped_matches = len(match_pivot)
+            
+            if total_mapped_matches > 0:
+                # In T20s, if Innings 2 score > Innings 1 score, Chasing team won.
+                match_pivot['Is_Chase_Win'] = match_pivot[2] > match_pivot[1]
+                chase_wins = match_pivot['Is_Chase_Win'].sum()
+                chasing_win_pct = (chase_wins / total_mapped_matches) * 100.0
                 
-                # Innings 2 is the chasing team
-                if 2 in unique_matches.columns:
-                    unique_matches['Chasing_Team'] = unique_matches[2]
-                    unique_matches['Is_Chase_Win'] = unique_matches['Winning Team'] == unique_matches['Chasing_Team']
-                    
-                    chase_wins = unique_matches['Is_Chase_Win'].sum()
-                    chasing_win_pct = (chase_wins / total_mapped_matches) * 100.0
-                    
-                    # 3. Calculate Clean Average Winning Score
-                    win_scores = []
-                    for _, row in unique_matches.iterrows():
-                        winner = row['Winning Team']
-                        match_id = row[m_id_col]
-                        winner_score = score_df[(score_df[m_id_col] == match_id) & (score_df['Batting Team'] == winner)]['Ball_Total_Runs'].sum()
-                        if winner_score > 0:
-                            win_scores.append(winner_score)
-                    
-                    if win_scores:
-                        avg_winning_score = np.mean(win_scores)
+                # Determine the winning score for each match dynamically
+                match_pivot['Winning_Score'] = np.where(match_pivot['Is_Chase_Win'], match_pivot[2], match_pivot[1])
+                avg_winning_score = match_pivot['Winning_Score'].mean()
             else:
-                avg_winning_score = avg_1st_inn + 12.0 if avg_1st_inn > 0 else 165.0
+                # Ground fallback if a stadium only has partial innings recorded
+                avg_winning_score = avg_1st_inn + 8.0 if avg_1st_inn > 0 else 165.0
+                chasing_win_pct = 50.0
         else:
             avg_1st_inn, avg_winning_score, chasing_win_pct = 165.0, 175.0, 50.0
-
+            
+            
         # High-level Structural Metric Layout Display Cards
         top_kpi1, top_kpi2, top_kpi3 = st.columns(3)
         top_kpi1.markdown(f'<div class="kpi-card kpi-phase"><p style="margin:0;color:#8b949e;font-size:13px;font-weight:bold;">AVG 1ST INNINGS SCORE</p><div data-testid="stMetricValue">{avg_1st_inn:.0f}</div></div>', unsafe_allow_html=True)
