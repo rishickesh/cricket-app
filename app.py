@@ -381,57 +381,272 @@ with tab_bowling:
         mode_toggle = header_right.radio("Display Mode", ["Heatmap", "Scatter"], horizontal=True, label_visibility="collapsed")
         st.plotly_chart(build_bowler_topography(df, selected_bowler_name, mode_toggle), use_container_width=True)
 
+# ------------------------------------------
+# TAB 3: SQUAD STRATEGY MATCHUP MATRIX
+# ------------------------------------------
 with tab_matchup:
     st.markdown("## Squad Strategy Matchup Matrix")
-    all_batters = sorted(df['Batter'].dropna().unique())
-    all_bowlers = sorted(df['Bowler'].dropna().unique())
-    default_batters, default_bowlers = all_batters[:8] if len(all_batters) >= 8 else all_batters, all_bowlers[:8] if len(all_bowlers) >= 8 else all_bowlers
+    st.markdown(
+        "<p style='color:#8b949e; font-size:14px; margin-top:-10px;'>"
+        "Click any cell to inspect that batter vs bowler matchup in detail.</p>",
+        unsafe_allow_html=True
+    )
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 Matchup Configuration")
-    selected_matrix_batters = st.sidebar.multiselect("Select Batters for Matrix", all_batters, default=default_batters)
-    selected_matrix_bowlers = st.sidebar.multiselect("Select Bowlers for Matrix", all_bowlers, default=default_bowlers)
-    if selected_matrix_batters and selected_matrix_bowlers:
-        matchup_raw = df[df['Batter'].isin(selected_matrix_batters) & df['Bowler'].isin(selected_matrix_bowlers)].copy()
-        matchup_agg = matchup_raw.groupby(['Bowler', 'Batter']).agg(runs=('Runs', 'sum'), balls=('Is_Legal', 'count'), outs=('Is_Bowler_Wicket', 'sum')).reset_index()
+
+    all_batters = sorted(df['Batter'].dropna().unique())
+    all_bowlers = sorted(df['Bowler'].dropna().unique())
+
+    default_batters = all_batters[:8] if len(all_batters) >= 8 else all_batters
+    default_bowlers = all_bowlers[:8] if len(all_bowlers) >= 8 else all_bowlers
+
+    selected_matrix_batters = st.sidebar.multiselect(
+        "Select Batters for Matrix", all_batters,
+        default=default_batters, key="matrix_batters_sel"
+    )
+    selected_matrix_bowlers = st.sidebar.multiselect(
+        "Select Bowlers for Matrix", all_bowlers,
+        default=default_bowlers, key="matrix_bowlers_sel"
+    )
+
+    if not selected_matrix_batters or not selected_matrix_bowlers:
+        st.warning("⚠️ Please select at least one Batter and one Bowler in the sidebar.")
+    else:
+        # Aggregate matchup data
+        matchup_raw = df[
+            df['Batter'].isin(selected_matrix_batters) &
+            df['Bowler'].isin(selected_matrix_bowlers)
+        ].copy()
+
+        matchup_agg = matchup_raw.groupby(['Bowler', 'Batter']).agg(
+            runs=('Runs', 'sum'),
+            balls=('Is_Legal', 'count'),
+            outs=('Is_Bowler_Wicket', 'sum')
+        ).reset_index()
         matchup_agg['SR'] = (matchup_agg['runs'] / np.maximum(matchup_agg['balls'], 1)) * 100
+
         def cell_color(row):
-            if row['balls'] < 10: return '#1d242e'
-            elif row['SR'] >= 145: return '#6e1a24'
-            elif row['SR'] >= 115: return '#4c1d6e'
-            else: return '#1d446e'
+            if row['balls'] < 10:
+                return '#1d242e'
+            elif row['SR'] >= 145:
+                return '#6e1a24'
+            elif row['SR'] >= 115:
+                return '#4c1d6e'
+            else:
+                return '#1d446e'
+
         matchup_agg['Cell_Color'] = matchup_agg.apply(cell_color, axis=1)
-        cell_lookup = {(r['Bowler'], r['Batter']): r for _, r in matchup_agg.iterrows()}
-        if 'matrix_focus_batter' not in st.session_state: st.session_state.matrix_focus_batter = selected_matrix_batters[0]
-        if 'matrix_focus_bowler' not in st.session_state: st.session_state.matrix_focus_bowler = selected_matrix_bowlers[0]
+
+        # Build lookup dictionary
+        cell_lookup = {
+            (r['Bowler'], r['Batter']): r
+            for _, r in matchup_agg.iterrows()
+        }
+
+        # Session-state defaults
+        if ('matrix_focus_batter' not in st.session_state or st.session_state.matrix_focus_batter not in selected_matrix_batters):
+            st.session_state.matrix_focus_batter = selected_matrix_batters[0]
+        if ('matrix_focus_bowler' not in st.session_state or st.session_state.matrix_focus_bowler not in selected_matrix_bowlers):
+            st.session_state.matrix_focus_bowler = selected_matrix_bowlers[0]
+
+        # Layout allocation
         matrix_left, details_right = st.columns([2, 1])
+
         with matrix_left:
+            st.markdown("""
+                <div style="background-color:#11161d;border:1px solid #30363d;border-radius:6px;
+                            padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;
+                            gap:12px;justify-content:center;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div style="width:14px;height:14px;background:#6e1a24;border-radius:3px;"></div>
+                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR ≥145 (Batter dominates)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div style="width:14px;height:14px;background:#4c1d6e;border-radius:3px;"></div>
+                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR 115-144 (Balanced)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div style="width:14px;height:14px;background:#1d446e;border-radius:3px;"></div>
+                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR &lt;115 (Bowler dominates)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div style="width:14px;height:14px;background:#1d242e;border-radius:3px;"></div>
+                        <span style="font-size:12px;color:#8b949e;">&lt;10b (Low sample)</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+            # Header row (batter names)
             header_cols = st.columns([1.6] + [1] * len(selected_matrix_batters))
+            header_cols[0].markdown(
+                "<p style='color:#8b949e;font-size:11px;margin:0;text-align:right;"
+                "padding-right:6px;'>Bowler \\ Batter</p>",
+                unsafe_allow_html=True
+            )
             for col_idx, batter in enumerate(selected_matrix_batters):
                 is_selected = (batter == st.session_state.matrix_focus_batter)
-                header_cols[col_idx + 1].markdown(f"<p style='color:{'#ffa500' if is_selected else '#8b949e'};font-size:10px;font-weight:bold;text-align:center;writing-mode:vertical-rl;transform:rotate(180deg);height:70px;'>{batter}</p>", unsafe_allow_html=True)
+                color = '#ffa500' if is_selected else '#8b949e'
+                header_cols[col_idx + 1].markdown(
+                    f"<p style='color:{color};font-size:10px;font-weight:bold;"
+                    f"text-align:center;margin:0;writing-mode:vertical-rl;"
+                    f"transform:rotate(180deg);height:70px;'>{batter}</p>",
+                    unsafe_allow_html=True
+                )
+
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+            # Render data cells
             for bowler in selected_matrix_bowlers:
                 is_bowler_selected = (bowler == st.session_state.matrix_focus_bowler)
+                bowler_color = '#ffa500' if is_bowler_selected else '#c9d1d9'
+
                 row_cols = st.columns([1.6] + [1] * len(selected_matrix_batters))
-                row_cols[0].markdown(f"<p style='color:{'#ffa500' if is_bowler_selected else '#c9d1d9'};font-size:11px;font-weight:bold;text-align:right;padding-right:6px;line-height:46px;'>{bowler}</p>", unsafe_allow_html=True)
+
+                row_cols[0].markdown(
+                    f"<p style='color:{bowler_color};font-size:11px;font-weight:bold;"
+                    f"text-align:right;padding-right:6px;margin:0;line-height:46px;'>{bowler}</p>",
+                    unsafe_allow_html=True
+                )
+
                 for col_idx, batter in enumerate(selected_matrix_batters):
-                    stats = cell_lookup.get((bowler, batter))
-                    bg = stats['Cell_Color'] if stats is not None else '#11161d'
-                    text = f"{int(stats['runs'])}({int(stats['balls'])})\n{int(stats['outs'])}W" if stats is not None else "—"
-                    border = '2px solid #ffa500' if (batter == st.session_state.matrix_focus_batter and bowler == st.session_state.matrix_focus_bowler) else '1px solid #30363d'
+                    key = (bowler, batter)
+                    stats = cell_lookup.get(key)
+                    is_active = (batter == st.session_state.matrix_focus_batter and bowler == st.session_state.matrix_focus_bowler)
+
+                    if stats is not None:
+                        bg = stats['Cell_Color']
+                        text = f"{int(stats['runs'])}({int(stats['balls'])})\n{int(stats['outs'])}W"
+                    else:
+                        bg = '#11161d'
+                        text = "—"
+
+                    border = '2px solid #ffa500' if is_active else '1px solid #30363d'
+
                     with row_cols[col_idx + 1]:
-                        st.markdown(f"""<style>div[data-testid="stButton"] > button[key="cell_{bowler}_{batter}"] {{ background-color: {bg}; border: {border}; color: white; font-size: 10px; height: 46px; width: 100%; }}</style>""", unsafe_allow_html=True)
+                        st.markdown(
+                            f"""
+                            <style>
+                            div[data-testid="stButton"] > button[key="cell_{bowler}_{batter}"] {{
+                                background-color: {bg};
+                                border: {border};
+                                border-radius: 4px;
+                                color: #ffffff;
+                                font-size: 10px;
+                                font-weight: 600;
+                                white-space: pre-line;
+                                line-height: 1.3;
+                                width: 100%;
+                                height: 46px;
+                                padding: 2px 4px;
+                                cursor: pointer;
+                            }}
+                            div[data-testid="stButton"] > button[key="cell_{bowler}_{batter}"]:hover {{
+                                border-color: #ffa500 !important;
+                                background-color: {bg} !important;
+                            }}
+                            </style>
+                            """,
+                            unsafe_allow_html=True
+                        )
                         if st.button(text, key=f"cell_{bowler}_{batter}", use_container_width=True):
-                            st.session_state.matrix_focus_batter, st.session_state.matrix_focus_bowler = batter, bowler
+                            st.session_state.matrix_focus_batter = batter
+                            st.session_state.matrix_focus_bowler = bowler
                             st.rerun()
+
+        # Render complete detail panel metrics configuration
+        focus_batter = st.session_state.matrix_focus_batter
+        focus_bowler = st.session_state.matrix_focus_bowler
+
         with details_right:
-            focus_b, focus_w = st.session_state.matrix_focus_batter, st.session_state.matrix_focus_bowler
-            tgt_df = matchup_raw[(matchup_raw['Batter'] == focus_b) & (matchup_raw['Bowler'] == focus_w)]
-            st.markdown(f"<div class='sub-card'><h3>⚔️ {focus_b}</h3><p>vs {focus_w}</p><hr/>", unsafe_allow_html=True)
+            tgt_df = matchup_raw[(matchup_raw['Batter'] == focus_batter) & (matchup_raw['Bowler'] == focus_bowler)]
+
+            t_runs = int(tgt_df['Runs'].sum())
+            t_balls = int(tgt_df[tgt_df['Is_Legal'] == True].shape[0])
+            t_outs = int(tgt_df['Is_Bowler_Wicket'].sum())
+            t_sr = (t_runs / max(t_balls, 1)) * 100
+            t_dots = int(tgt_df[(tgt_df['Runs'] == 0) & (tgt_df['Is_Bowler_Wicket'] == False)].shape[0])
+            dot_pct = (t_dots / max(t_balls, 1)) * 100
+
+            sample_warning = (
+                "<p style='color:#f0a830;font-size:11px;margin:4px 0 0 0;'>⚠️ Small sample — treat with caution.</p>"
+                if t_balls < 10 else ""
+            )
+
+            st.markdown(
+                f"""
+                <div style='background-color:#161b22;padding:18px;border-radius:8px;border:1px solid #30363d;'>
+                    <h3 style='margin:0 0 2px 0;font-size:16px;'>⚔️ {focus_batter}</h3>
+                    <p style='margin:0;color:#8b949e;font-size:12px;'>vs&nbsp;<span style='color:#c9d1d9;font-weight:bold;'>{focus_bowler}</span></p>
+                    {sample_warning}
+                    <hr style='border-color:#30363d;margin:12px 0;'/>
+                """,
+                unsafe_allow_html=True
+            )
+
             m1, m2, m3 = st.columns(3)
-            m1.metric("Runs", int(tgt_df['Runs'].sum()))
-            m2.metric("Balls", int(tgt_df[tgt_df['Is_Legal'] == True].shape[0]))
-            m3.metric("Outs", int(tgt_df['Is_Bowler_Wicket'].sum()))
-            st.markdown("</div>", unsafe_allow_html=True)
+            m1.metric("Runs", t_runs)
+            m2.metric("Balls", t_balls)
+            m3.metric("Outs",  t_outs)
+
+            sr_color  = '#f85149' if t_sr >= 145 else ('#ffa500' if t_sr >= 115 else '#58a6ff')
+            tsr_val   = t_sr - 132.5
+            ter_val   = (t_runs / max(t_balls, 1) * 6) - 8.1
+            tsr_color = '#f85149' if tsr_val > 0 else '#2ea043'
+            ter_color = '#f85149' if ter_val > 0 else '#2ea043'
+
+            st.markdown(
+                f"""
+                <div style='display:flex;gap:8px;margin:12px 0;'>
+                    <div style='flex:1;text-align:center;background:#11161d;padding:10px;
+                                border-radius:6px;border:1px solid #21262d;'>
+                        <p style='margin:0;font-size:11px;color:#8b949e;font-weight:bold;'>STRIKE RATE</p>
+                        <h2 style='margin:4px 0 0 0;color:{sr_color};font-size:24px;'>{t_sr:.1f}</h2>
+                    </div>
+                    <div style='flex:1;text-align:center;background:#11161d;padding:10px;
+                                border-radius:6px;border:1px solid #21262d;'>
+                        <p style='margin:0;font-size:11px;color:#8b949e;font-weight:bold;'>DOTS</p>
+                        <h2 style='margin:4px 0 0 0;color:#c9d1d9;font-size:24px;'>{dot_pct:.0f}%</h2>
+                        <p style='margin:0;font-size:10px;color:#8b949e;'>({t_dots} balls)</p>
+                    </div>
+                </div>
+
+                <div style='display:flex;gap:8px;margin-bottom:14px;'>
+                    <div style='flex:1;text-align:center;background:#11161d;padding:10px;
+                                border-radius:6px;border:1px solid #21262d;'>
+                        <p style='margin:0;font-size:11px;color:#8b949e;font-weight:bold;'>TSR</p>
+                        <h2 style='margin:4px 0 0 0;color:{tsr_color};font-size:22px;'>
+                            {"+" if tsr_val > 0 else ""}{tsr_val:.1f}
+                        </h2>
+                    </div>
+                    <div style='flex:1;text-align:center;background:#11161d;padding:10px;
+                                border-radius:6px;border:1px solid #21262d;'>
+                        <p style='margin:0;font-size:11px;color:#8b949e;font-weight:bold;'>TER</p>
+                        <h2 style='margin:4px 0 0 0;color:{ter_color};font-size:22px;'>
+                            {"+" if ter_val > 0 else ""}{ter_val:.2f}
+                        </h2>
+                    </div>
+                </div>
+
+                <div style='background:#11161d;border:1px solid #30363d;border-radius:6px;
+                            padding:10px;'>
+                    <p style='margin:0 0 8px 0;font-size:12px;color:#ffffff;font-weight:bold;'>
+                        💡 Interpretations
+                    </p>
+                    <p style='margin:0 0 6px 0;font-size:11px;color:#8b949e;line-height:1.5;'>
+                        <b>TSR:</b> Strike rate surplus/deficit vs expected baseline (132.5).
+                        Positive = batter advantage.
+                    </p>
+                    <p style='margin:0;font-size:11px;color:#8b949e;line-height:1.5;'>
+                        <b>TER:</b> Economy variance vs expected baseline (8.1 rpo).
+                        Positive = bowler being expensive.
+                    </p>
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
 
 # --- TAB 4: TACTICAL FIELD PLANNER WORKSPACE ---
 with tab_fielding:
