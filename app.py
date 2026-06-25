@@ -117,6 +117,7 @@ df['Match_Phase'] = df['Over'].apply(assign_match_phase)
 bowling_wickets = ['bowled', 'caught', 'lbw', 'stumped', 'caught and bowled', 'hit wicket']
 df['Is_Bowler_Wicket'] = df['Wicket'].str.lower().isin(bowling_wickets)
 
+print(df.columns)
 
 # ==========================================
 # 4. BATTING ANALYTICAL PLOT ENGINES
@@ -316,12 +317,14 @@ def compute_gap_density_metrics(df, batter, adjusted_fielders):
 # ==========================================
 # 7. MAIN APP CONTROLLER & TABS SYSTEM
 # ==========================================
-tab_batting, tab_bowling, tab_matchup, tab_fielding, tab_venue = st.tabs([
+tab_batting, tab_bowling, tab_matchup, tab_fielding, tab_venue, tab_diagnostics, tab_hub = st.tabs([
     "🏏 Batter Profiles", 
-    "🍒 Bowler Topography", 
-    "📊 Matchup Matrix",
+    "🎳 Bowler Topography", 
+    "⚔️ Matchup Matrix",
     "📋 Tactical Field Planner",
-    "🏟️ Venue Scouting Hub"
+    "🏟️ Venue Scouting Hub",
+    "📊 Team Diagnostics",
+    "💪 Player Improvements"
 ])
 
 # --- TABS 1, 2, & 3 BUSINESS LOGIC ---
@@ -927,3 +930,1205 @@ with tab_venue:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_comb3, use_container_width=True)
+
+# --- TAB 6: TEAM DIAGNOSTICS BOARD ---
+# --- TAB 6: TEAM DIAGNOSTICS BOARD ---
+with tab_diagnostics:
+    st.markdown("## 📊 Team Diagnostic Board")
+
+    df['_match_id'] = df['Match'].astype(str) + "||" + df['Date'].astype(str)
+    m_id = '_match_id'
+
+#     if 'Home_Team' not in df.columns:
+    df['Home_Team'] = df['Match'].astype(str).apply(
+        lambda x: x.split(' v ')[0].strip() if ' v ' in x else x.strip()
+    )
+#     if 'Away_Team' not in df.columns:
+    df['Away_Team'] = df['Match'].astype(str).apply(
+        lambda x: x.split(' v ')[1].strip() if ' v ' in x else x.strip()
+    )
+
+    all_teams = sorted([t for t in df['Batting Team'].dropna().unique() if str(t).strip()])
+
+    col_f1, col_f2 = st.columns([1.5, 1])
+    with col_f1:
+        selected_team = st.selectbox(
+            "Select Team to Diagnose", all_teams,
+            index=0, key="diag_team_select"
+        )
+    with col_f2:
+        venue_scope = st.radio(
+            "Match Scope", ["All", "Home", "Away"],
+            horizontal=True, key="diag_venue_scope"
+        )
+
+    team_competitions = df.loc[
+        df['Batting Team'] == selected_team, 'Competition'
+    ].dropna().unique().tolist()
+
+    if team_competitions:
+        comp_df = df[df['Competition'].isin(team_competitions)].copy()
+        comp_label = ", ".join(sorted(team_competitions))
+    else:
+        comp_df = df.copy()
+        comp_label = "All"
+
+    st.markdown(
+        f"<p style='color:#8b949e;font-size:11px;margin:-8px 0 10px 0;'>"
+        f"📋 Competition context: <span style='color:#c9d1d9;font-weight:600;'>{comp_label}</span></p>",
+        unsafe_allow_html=True
+    )
+
+    if venue_scope == "Home":
+        # Team: selected team batting at their home ground
+        team_bat_mask = (
+            (comp_df['Batting Team'] == selected_team) &
+            (comp_df['Home_Team']    == selected_team)
+        )
+        # Team bowling: opponent batting while selected team is at home
+        team_bowl_mask = (
+            (comp_df['Batting Team'] != selected_team) &
+            (comp_df['Home_Team']    == selected_team)
+        )
+        # League: ALL OTHER teams when they batted at their own home ground
+        lg_bat_mask = (
+            (comp_df['Batting Team'] == comp_df['Home_Team']) &
+            (comp_df['Batting Team'] != selected_team)
+        )
+        # League bowling: opponents batting away in those same matches
+        lg_bowl_mask = (
+            (comp_df['Batting Team'] == comp_df['Away_Team']) &
+            (comp_df['Away_Team']    != selected_team)
+        )
+        scope_label = f"Home teams avg · {comp_label}"
+
+    elif venue_scope == "Away":
+        # Team: selected team batting away from home
+        team_bat_mask = (
+            (comp_df['Batting Team'] == selected_team) &
+            (comp_df['Away_Team']    == selected_team)
+        )
+        # Team bowling: home team batting while selected team plays away
+        team_bowl_mask = (
+            (comp_df['Batting Team'] != selected_team) &
+            (comp_df['Away_Team']    == selected_team)
+        )
+        # League: ALL OTHER teams when they batted away from home
+        lg_bat_mask = (
+            (comp_df['Batting Team'] == comp_df['Away_Team']) &
+            (comp_df['Batting Team'] != selected_team)
+        )
+        # League bowling: home teams batting in those away matches
+        lg_bowl_mask = (
+            (comp_df['Batting Team'] == comp_df['Home_Team']) &
+            (comp_df['Home_Team']    != selected_team)
+        )
+        scope_label = f"Away teams avg · {comp_label}"
+
+    else:  # All
+        team_bat_mask = comp_df['Batting Team'] == selected_team
+        team_bowl_mask = (
+            (comp_df['Batting Team'] != selected_team) &
+            (
+                (comp_df['Home_Team'] == selected_team) |
+                (comp_df['Away_Team'] == selected_team)
+            )
+        )
+        lg_bat_mask  = comp_df['Batting Team'] != selected_team
+        lg_bowl_mask = comp_df['Batting Team'] != selected_team
+        scope_label = f"Competition avg · {comp_label}"
+
+    team_bat_df    = comp_df[team_bat_mask].copy()
+    team_bowl_df   = comp_df[team_bowl_mask].copy()
+    league_bat_df  = comp_df[lg_bat_mask].copy()
+    league_bowl_df = comp_df[lg_bowl_mask].copy()
+
+    t_bat_matches   = max(team_bat_df[m_id].nunique(),    1)
+    t_bowl_matches  = max(team_bowl_df[m_id].nunique(),   1)
+    lg_bat_matches  = max(league_bat_df[m_id].nunique(),  1)
+    lg_bowl_matches = max(league_bowl_df[m_id].nunique(), 1)
+
+    pp_bat_team  = team_bat_df[team_bat_df['Match_Phase']       == 'PP']
+    pp_bowl_team = team_bowl_df[team_bowl_df['Match_Phase']     == 'PP']
+    pp_lg_bat    = league_bat_df[league_bat_df['Match_Phase']   == 'PP']
+    pp_lg_bowl   = league_bowl_df[league_bowl_df['Match_Phase'] == 'PP']
+
+    pp_wkts_lost     = float(pp_bat_team['Is_Bowler_Wicket'].sum()  / t_bat_matches)
+    pp_wkts_taken    = float(pp_bowl_team['Is_Bowler_Wicket'].sum() / t_bowl_matches)
+    lg_pp_wkts_lost  = float(pp_lg_bat['Is_Bowler_Wicket'].sum()    / lg_bat_matches)
+    lg_pp_wkts_taken = float(pp_lg_bowl['Is_Bowler_Wicket'].sum()   / lg_bowl_matches)
+
+    to_runs    = float(pp_bat_team['Runs'].sum()  / t_bat_matches)
+    lg_to_runs = float(pp_lg_bat['Runs'].sum()    / lg_bat_matches)
+
+    avg_1st_wkt    = float(pp_bat_team['Runs'].sum()  / max(float(pp_bat_team['Is_Bowler_Wicket'].sum()),  1))
+    lg_avg_1st_wkt = float(pp_lg_bat['Runs'].sum()    / max(float(pp_lg_bat['Is_Bowler_Wicket'].sum()),    1))
+
+    phases_list = ['PP', 'Mid', 'Death']
+    plot_phases = ['Powerplay', 'Middle', 'Death']
+
+    team_runs_phase, team_sr_phase, team_wkts_lost_phase  = [], [], []
+    team_wkts_taken_phase, team_econ_phase                = [], []
+    lg_sr_phase, lg_econ_phase                            = [], []
+
+    for p in phases_list:
+        pb       = team_bat_df[team_bat_df['Match_Phase']       == p]
+        pbowl    = team_bowl_df[team_bowl_df['Match_Phase']     == p]
+        lg_pb    = league_bat_df[league_bat_df['Match_Phase']   == p]
+        lg_pbowl = league_bowl_df[league_bowl_df['Match_Phase'] == p]
+
+        p_runs  = float(pb['Runs'].sum())
+        p_balls = max(int(pb[pb['Is_Legal'] == True].shape[0]), 1)
+        team_runs_phase.append(int(p_runs))
+        team_sr_phase.append((p_runs / p_balls) * 100)
+        team_wkts_lost_phase.append(int(pb['Is_Bowler_Wicket'].sum()))
+
+        b_ext      = float(pbowl['Bowler Extra Runs'].sum())
+        bowl_balls = max(int(pbowl[pbowl['Is_Legal'] == True].shape[0]), 1)
+        team_wkts_taken_phase.append(int(pbowl['Is_Bowler_Wicket'].sum()))
+        team_econ_phase.append(((float(pbowl['Runs'].sum()) + b_ext) / bowl_balls) * 6)
+
+        lg_runs  = float(lg_pb['Runs'].sum())
+        lg_balls = max(int(lg_pb[lg_pb['Is_Legal'] == True].shape[0]), 1)
+        lg_sr_phase.append((lg_runs / lg_balls) * 100)
+
+        lg_b_ext      = float(lg_pbowl['Bowler Extra Runs'].sum())
+        lg_bowl_balls = max(int(lg_pbowl[lg_pbowl['Is_Legal'] == True].shape[0]), 1)
+        lg_econ_phase.append(((float(lg_pbowl['Runs'].sum()) + lg_b_ext) / lg_bowl_balls) * 6)
+
+    tsr_val = (team_sr_phase[0] - lg_sr_phase[0]) / 10
+    ter_val = team_econ_phase[0] - lg_econ_phase[0]
+
+    def border_color(team_val, lg_val, lower_is_better=False):
+        better = team_val < lg_val if lower_is_better else team_val > lg_val
+        return "#1f6e43" if better else "#a62a22"
+
+    kpi_cols = st.columns(6)
+    cards = [
+        {
+            "title": "PP WICKETS LOST", "icon": "🛡️",
+            "val":   f"{pp_wkts_lost:.2f}",
+            "sub":   f"{scope_label}: {lg_pp_wkts_lost:.2f}",
+            "border": border_color(pp_wkts_lost, lg_pp_wkts_lost, lower_is_better=True),
+        },
+        {
+            "title": "PP WICKETS TAKEN", "icon": "🎯",
+            "val":   f"{pp_wkts_taken:.2f}",
+            "sub":   f"{scope_label}: {lg_pp_wkts_taken:.2f}",
+            "border": border_color(pp_wkts_taken, lg_pp_wkts_taken),
+        },
+        {
+            "title": "PP RUNS SCORED", "icon": "⚡",
+            "val":   f"{to_runs:.1f}",
+            "sub":   f"{scope_label}: {lg_to_runs:.1f}",
+            "border": border_color(to_runs, lg_to_runs),
+        },
+        {
+            "title": "AVG 1ST WKT PART", "icon": "🤝",
+            "val":   f"{avg_1st_wkt:.1f}",
+            "sub":   f"{scope_label}: {lg_avg_1st_wkt:.1f}",
+            "border": border_color(avg_1st_wkt, lg_avg_1st_wkt),
+        },
+        {
+            "title": "TRUE RUN RATE (TSR)", "icon": "📈",
+            "val":   f"{tsr_val:+.2f}",
+            "sub":   f"Ours: {team_sr_phase[0]/10:.2f}  |  {scope_label}: {lg_sr_phase[0]/10:.2f}",
+            "border": border_color(tsr_val, 0),
+        },
+        {
+            "title": "TRUE ECONOMY (TER)", "icon": "🎯",
+            "val":   f"{ter_val:+.2f}",
+            "sub":   f"Ours: {team_econ_phase[0]:.2f}  |  {scope_label}: {lg_econ_phase[0]:.2f}",
+            "border": border_color(ter_val, 0, lower_is_better=True),
+        },
+    ]
+
+    for idx, col in enumerate(kpi_cols):
+        with col:
+            st.markdown(
+                f"""
+                <div style="background-color:#11161d;padding:14px;border-radius:6px;
+                            border:1px solid {cards[idx]['border']};text-align:center;">
+                    <p style="margin:0;font-size:10px;color:#8b949e;font-weight:bold;
+                              letter-spacing:.04em;line-height:1.4;">
+                        {cards[idx]['title']}&nbsp;{cards[idx]['icon']}
+                    </p>
+                    <h3 style="margin:8px 0 4px 0;font-size:24px;color:#fff;font-family:monospace;">
+                        {cards[idx]['val']}
+                    </h3>
+                    <p style="margin:0;font-size:10px;color:#8b949e;line-height:1.5;">
+                        {cards[idx]['sub']}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    sr_index   = (team_sr_phase[1]   / max(lg_sr_phase[1],    1)) * 100
+    econ_index = (lg_econ_phase[1]   / max(team_econ_phase[1],1)) * 100
+    dot_index  = 100 + ((team_wkts_taken_phase[1] - team_wkts_lost_phase[1]) * 2)
+
+    r1_left, r1_right = st.columns([1, 1])
+
+    with r1_left:
+        st.markdown(
+            f'<div class="sub-card"><h4 style="margin:0;font-size:14px;">'
+            f'Capability Index vs {scope_label}</h4></div>',
+            unsafe_allow_html=True
+        )
+        radar_cats = ['Batting SR','Batting Avg','Boundary %',
+                      'Bowl Econ (Inv)','Bowl SR (Inv)','Dot Ball %']
+        t_vals = [sr_index, 105, 98, econ_index, 112, dot_index]
+
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(
+            r=t_vals + [t_vals[0]], theta=radar_cats + [radar_cats[0]],
+            fill='toself', fillcolor='rgba(218,54,68,0.15)',
+            name=selected_team, line=dict(color='#da3644', width=2)
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=[100]*7, theta=radar_cats + [radar_cats[0]],
+            name=scope_label, line=dict(color='#8b949e', width=1.5, dash='dash')
+        ))
+        fig_radar.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[50,140], gridcolor='#30363d'),
+                angularaxis=dict(gridcolor='#30363d')
+            ),
+            template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)',
+            height=340, margin=dict(t=30,b=20,l=40,r=40),
+            legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center")
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    with r1_right:
+        st.markdown(
+            f'<div class="sub-card"><h4 style="margin:0;font-size:14px;">'
+            f'Performance Variance vs {scope_label}</h4></div>',
+            unsafe_allow_html=True
+        )
+        var_cats = ['Dot Ball %','Bowl SR','Bowl Economy',
+                    'Boundary %','Batting Avg','Batting SR']
+        var_vals = [
+            int(dot_index - 100),
+            int((team_wkts_taken_phase[1] / max(team_wkts_lost_phase[1],1) - 1) * 20),
+            int(econ_index - 100),
+            int(sr_index - 100) // 3,
+            5,
+            int(sr_index - 100)
+        ]
+        bar_colors = ['#2ea043' if v >= 0 else '#da3644' for v in var_vals]
+
+        fig_var = go.Figure(go.Bar(
+            x=var_vals, y=var_cats, orientation='h',
+            marker_color=bar_colors,
+            text=[f"{v:+d}" for v in var_vals],
+            textposition='outside',
+            textfont=dict(color='#8b949e', size=11)
+        ))
+        fig_var.add_vline(x=0, line_color='#30363d', line_width=1.5)
+        fig_var.update_layout(
+            template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(title=f"Surplus / Deficit vs {scope_label}", gridcolor='#21262d', zeroline=False),
+            yaxis=dict(showgrid=False),
+            height=340, margin=dict(t=20,b=20,l=10,r=60)
+        )
+        st.plotly_chart(fig_var, use_container_width=True)
+
+    r2_left, r2_right = st.columns([1, 1])
+
+    with r2_left:
+        st.markdown('<div class="sub-card"><h4 style="margin:0;font-size:14px;">Batting Strike Rate by Phase</h4></div>', unsafe_allow_html=True)
+        fig_bat = go.Figure()
+        fig_bat.add_trace(go.Bar(
+            x=plot_phases, y=team_runs_phase, name='Runs Scored',
+            marker_color='#1f3a5f', yaxis='y1'
+        ))
+        fig_bat.add_trace(go.Scatter(
+            x=plot_phases, y=team_sr_phase, name=f'{selected_team} SR',
+            line=dict(color='#388bfd', width=3), marker=dict(size=7), yaxis='y2'
+        ))
+        fig_bat.add_trace(go.Scatter(
+            x=plot_phases, y=lg_sr_phase, name=scope_label,
+            line=dict(color='#8b949e', width=1.5, dash='dash'), yaxis='y2'
+        ))
+        fig_bat.add_trace(go.Scatter(
+            x=plot_phases, y=team_wkts_lost_phase, name='Wkts Lost',
+            line=dict(color='#f85149', width=2, dash='dot'), marker=dict(size=6), yaxis='y3'
+        ))
+        fig_bat.update_layout(
+            template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(showgrid=False),
+            yaxis=dict(title="Runs Scored", side="left", showgrid=True, gridcolor='#161b22'),
+            yaxis2=dict(title="Strike Rate", overlaying="y", side="right", range=[80,260]),
+            yaxis3=dict(title="Wickets", overlaying="y", side="right",
+                        anchor="free", autoshift=True, range=[0, max(team_wkts_lost_phase)+5]),
+            height=350, margin=dict(t=10,b=10,l=40,r=40),
+            legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center", font=dict(size=10))
+        )
+        st.plotly_chart(fig_bat, use_container_width=True)
+
+    with r2_right:
+        st.markdown('<div class="sub-card"><h4 style="margin:0;font-size:14px;">Bowling Economy Rate by Phase</h4></div>', unsafe_allow_html=True)
+        fig_bowl = go.Figure()
+        fig_bowl.add_trace(go.Bar(
+            x=plot_phases, y=team_wkts_taken_phase, name='Wkts Taken',
+            marker_color='#3a1515', yaxis='y1'
+        ))
+        fig_bowl.add_trace(go.Scatter(
+            x=plot_phases, y=team_econ_phase, name=f'{selected_team} Econ',
+            line=dict(color='#f85149', width=3), marker=dict(size=7), yaxis='y2'
+        ))
+        fig_bowl.add_trace(go.Scatter(
+            x=plot_phases, y=lg_econ_phase, name=scope_label,
+            line=dict(color='#8b949e', width=1.5, dash='dash'), yaxis='y2'
+        ))
+        fig_bowl.update_layout(
+            template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(showgrid=False),
+            yaxis=dict(title="Wickets Taken", side="left", showgrid=True, gridcolor='#161b22',
+                       range=[0, max(team_wkts_taken_phase)+5]),
+            yaxis2=dict(title="Economy Rate", overlaying="y", side="right", range=[4,16]),
+            height=350, margin=dict(t=10,b=10,l=40,r=40),
+            legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center", font=dict(size=10))
+        )
+        st.plotly_chart(fig_bowl, use_container_width=True)
+        
+# ==========================================
+# TAB: PLAYER STRATEGY HUB
+# ==========================================
+# Add "🎯 Player Strategy Hub" to your tab list, e.g.:
+#   tab_batting, tab_bowling, tab_matchup, tab_fielding, tab_venue, tab_diagnostics, tab_hub = st.tabs([...,"🎯 Player Strategy Hub"])
+
+with tab_hub:
+
+    # ══════════════════════════════════════════════════════════════════
+    # HELPER: Classify player role from career ball counts
+    # Allrounder = batted ≥50 legal balls AND bowled ≥80 legal balls
+    # ══════════════════════════════════════════════════════════════════
+    @st.cache_data
+    def classify_players(dataframe):
+        bat_balls = (
+            dataframe[dataframe['Is_Legal'] == True]
+            .groupby('Batter')
+            .size()
+            .rename('bat_balls')
+        )
+        bowl_balls = (
+            dataframe[dataframe['Is_Legal'] == True]
+            .groupby('Bowler')
+            .size()
+            .rename('bowl_balls')
+        )
+        all_names = sorted(set(bat_balls.index) | set(bowl_balls.index))
+        roles = {}
+        for name in all_names:
+            b  = bat_balls.get(name,  0)
+            bw = bowl_balls.get(name, 0)
+            if b >= 50 and bw >= 80:
+                roles[name] = 'Allrounder'
+            elif bw >= 80:
+                roles[name] = 'Bowler'
+            elif b >= 50:
+                roles[name] = 'Batter'
+            else:
+                roles[name] = 'Batter' if b >= bw else 'Bowler'
+        return roles
+
+    player_roles = classify_players(df)
+
+    # ── Sidebar controls ──────────────────────────────────────────────
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🎯 Player Strategy Hub")
+
+    all_hub_players = sorted(player_roles.keys())
+    selected_hub_player = st.sidebar.selectbox(
+        "Player Roster (Active Squad)", all_hub_players, key="hub_player_sel",
+        format_func=lambda x: f"{x} ({player_roles.get(x,'?')})"
+    )
+
+    # ── Detect current season dynamically based on the selected player ──
+    if 'Date' in df.columns:
+        df['_year'] = pd.to_datetime(df['Date'], errors='coerce').dt.year
+        
+        # Filter rows where the selected player was actively involved
+        player_mask = (df['Batter'] == selected_hub_player) | (df['Bowler'] == selected_hub_player)
+        player_years = df[player_mask]['_year'].dropna()
+        
+        if not player_years.empty:
+            current_season = int(player_years.max())
+        else:
+            # Fallback to general data max if no specific records are found
+            current_season = int(df['_year'].max()) if not df['_year'].dropna().empty else 2026
+    else:
+        current_season = 2026
+
+    phase_options = {'All Phases': None, 'Powerplay': 'PP', 'Middle': 'Mid', 'Death': 'Death'}
+    matchup_options = {'All Matchups': 'All', 'vs Pace': 'pace', 'vs Spin': 'spin'}
+
+    phase_sel    = st.sidebar.selectbox("Match Phase",     list(phase_options.keys()), key="hub_phase")
+    matchup_sel  = st.sidebar.selectbox("Matchup Class",   list(matchup_options.keys()), key="hub_matchup")
+
+    sel_phase   = phase_options[phase_sel]
+    sel_matchup = matchup_options[matchup_sel]
+
+    player_role = player_roles.get(selected_hub_player, 'Batter')
+
+    # ── Header ────────────────────────────────────────────────────────
+    role_badge_color = {'Batter': '#1f3a5f', 'Bowler': '#3a1515', 'Allrounder': '#2a1f00'}
+    role_text_color  = {'Batter': '#58a6ff', 'Bowler': '#f85149', 'Allrounder': '#e3b341'}
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+            <h2 style="margin:0;">{selected_hub_player}</h2>
+            <span style="background:{role_badge_color.get(player_role,'#21262d')};
+                         color:{role_text_color.get(player_role,'#fff')};
+                         font-size:11px;font-weight:700;padding:3px 10px;
+                         border-radius:12px;letter-spacing:.06em;">{player_role.upper()}</span>
+        </div>
+        <p style="color:#8b949e;font-size:12px;margin-top:0;">
+            Season: <b style="color:#c9d1d9;">{current_season}</b> &nbsp;|&nbsp;
+            Phase: <b style="color:#c9d1d9;">{phase_sel}</b> &nbsp;|&nbsp;
+            Filter: <b style="color:#c9d1d9;">{matchup_sel}</b>
+        </p>
+        """,
+        unsafe_allow_html=True
+    )
+    # ══════════════════════════════════════════════════════════════════
+    # DATA SLICING HELPERS
+    # ══════════════════════════════════════════════════════════════════
+    PACE_TYPES = ['RF', 'RFM', 'LF', 'RMF', 'LMF', 'RM', 'LM']
+    SPIN_TYPES = ['ROB', 'RLB', 'LOB', 'LSB', 'OB', 'LB', 'SLA']
+
+    def slice_bat(name, season=None, phase=None, matchup=None):
+        d = df[df['Batter'] == name].copy()
+        if season:
+            d = d[d['_year'] == season]
+        if phase:
+            d = d[d['Match_Phase'] == phase]
+        if matchup == 'pace':
+            d = d[d['Bowler Type'].isin(PACE_TYPES)]
+        elif matchup == 'spin':
+            d = d[d['Bowler Type'].isin(SPIN_TYPES)]
+        return d
+
+    def slice_bowl(name, season=None, phase=None):
+        d = df[df['Bowler'] == name].copy()
+        if season:
+            d = d[d['_year'] == season]
+        if phase:
+            d = d[d['Match_Phase'] == phase]
+        return d
+
+    def sr(runs, balls):
+        return (runs / max(balls, 1)) * 100
+
+    def econ(runs, balls):
+        return (runs / max(balls, 1)) * 6
+
+    def dot_pct(d, legal_only=True):
+        base = d[d['Is_Legal'] == True] if legal_only else d
+        dots = base[(base['Runs'] == 0) & (base['Is_Bowler_Wicket'] == False)]
+        return (len(dots) / max(len(base), 1)) * 100
+
+    def boundary_pct(d):
+        base = d[d['Is_Legal'] == True]
+        boundaries = base[base['Runs'] >= 4]
+        return (len(boundaries) / max(len(base), 1)) * 100
+
+    # ══════════════════════════════════════════════════════════════════
+    # ████████████████  BATTER UI  ████████████████
+    # ══════════════════════════════════════════════════════════════════
+    def render_batter_ui(name):
+
+        cur  = slice_bat(name, season=current_season, phase=sel_phase, matchup=sel_matchup if sel_matchup != 'All' else None)
+        hist = slice_bat(name, phase=sel_phase, matchup=sel_matchup if sel_matchup != 'All' else None)
+
+        cur_legal  = cur[cur['Is_Legal'] == True]
+        hist_legal = hist[hist['Is_Legal'] == True]
+
+        cur_runs   = int(cur['Runs'].sum())
+        cur_balls  = len(cur_legal)
+        cur_dismi  = int(cur['Is_Bowler_Wicket'].sum())
+        cur_sr     = sr(cur_runs, cur_balls)
+        cur_avg    = cur_runs / max(cur_dismi, 1)
+        cur_bndpct = boundary_pct(cur)
+
+        # ── KPI Cards ─────────────────────────────────────────────────
+        c1, c2, c3, c4 = st.columns(4)
+        for col, title, val, fmt in [
+            (c1, "RUNS",         cur_runs,    f"{cur_runs}"),
+            (c2, "STRIKE RATE",  cur_sr,      f"{cur_sr:.1f}"),
+            (c3, "AVERAGE",      cur_avg,     f"{cur_avg:.1f}"),
+            (c4, "BOUNDARY %",   cur_bndpct,  f"{cur_bndpct:.1f}%"),
+        ]:
+            col.markdown(
+                f"""
+                <div style="background:#11161d;border:1px solid #1f6e43;border-radius:8px;
+                            padding:18px;text-align:center;margin-bottom:12px;">
+                    <p style="margin:0;font-size:10px;color:#8b949e;font-weight:700;
+                              letter-spacing:.07em;">{title}</p>
+                    <h2 style="margin:8px 0 0 0;font-size:32px;color:#fff;font-family:monospace;">
+                        {fmt}
+                    </h2>
+                </div>
+                """, unsafe_allow_html=True
+            )
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        # ── Row 1: Wagon Wheel vs Career Baseline + Dismissal Heatmap ─
+        r1a, r1b = st.columns(2)
+
+        with r1a:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Wagon Wheel vs Career Baseline</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">Layered scoring zones: Current Season vs Historical Baseline</p></div>',
+                unsafe_allow_html=True
+            )
+
+            def sector_strike_rate(d, labels, bin_edges):
+                # Filter for legal deliveries and valid coordinates
+                d2 = d[d['Is_Legal'] == True].copy()
+                d2 = d2.dropna(subset=['FieldX','FieldY'])
+                d2 = d2[(d2['FieldX'] != 0) & (d2['FieldY'] != 0)]
+
+                if len(d2) == 0:
+                    return {l: 0.0 for l in labels}
+
+                cx, cy = 175.0, 166.5
+                d2['Angle'] = (np.degrees(np.arctan2(d2['FieldY']-cy, d2['FieldX']-cx)) + 360) % 360
+                d2['Sector'] = pd.cut(d2['Angle'], bins=bin_edges, labels=labels, right=False)
+
+                # Group once to aggregate both Runs (sum) and Balls (count)
+                grouped = d2.groupby('Sector', observed=False).agg(
+                    Total_Runs=('Runs', 'sum'),
+                    Total_Balls=('Runs', 'count')  # Counting rows gives the legal ball count per sector
+                )
+
+                # Calculate Strike Rate: (Runs / Balls) * 100, defaulting to 0.0 if no balls faced
+                grouped['SR'] = np.where(
+                    grouped['Total_Balls'] > 0,
+                    (grouped['Total_Runs'] / grouped['Total_Balls']) * 100,
+                    0.0
+                )
+
+                # Reindex to ensure all sector labels are present and convert to dictionary
+                return grouped['SR'].reindex(labels, fill_value=0.0).to_dict()
+            
+            ww_labels = ['MID-WKT','SQ. LEG','B. FINE LEG','FINE LEG',
+                         'THIRD MAN','B. POINT','POINT','COVER',
+                         'MID-OFF','LONG OFF','LONG ON','MID-ON']
+            ww_bins   = np.arange(0, 390, 30)
+
+            cur_sec  = sector_strike_rate(cur,  ww_labels, ww_bins)
+            hist_sec = sector_strike_rate(hist, ww_labels, ww_bins)
+
+            cur_r  = [cur_sec[l]  for l in ww_labels] + [cur_sec[ww_labels[0]]]
+            hist_r = [hist_sec[l] for l in ww_labels] + [hist_sec[ww_labels[0]]]
+            theta  = ww_labels + [ww_labels[0]]
+
+            fig_ww = go.Figure()
+            fig_ww.add_trace(go.Scatterpolar(
+                r=hist_r, theta=theta, mode='lines',
+                name='Historical Baseline (Career)',
+                line=dict(color='#8b949e', width=2, dash='dot'),
+                fill='toself', fillcolor='rgba(139,148,158,0.06)'
+            ))
+            fig_ww.add_trace(go.Scatterpolar(
+                r=cur_r, theta=theta, mode='lines+markers',
+                name=f'Current Season {current_season}',
+                line=dict(color='#da3644', width=2),
+                fill='toself', fillcolor='rgba(218,54,68,0.20)',
+                marker=dict(color='#da3644', size=5)
+            ))
+            fig_ww.update_layout(
+                polar=dict(
+                    radialaxis=dict(showticklabels=False, gridcolor='#21262d'),
+                    angularaxis=dict(direction='clockwise', period=12,
+                                     gridcolor='#21262d',
+                                     tickfont=dict(size=9, color='#8b949e'))
+                ),
+                paper_bgcolor='rgba(0,0,0,0)', template='plotly_dark',
+                legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center', font=dict(size=10)),
+                margin=dict(t=20, b=20, l=30, r=30), height=400
+            )
+            st.plotly_chart(fig_ww, use_container_width=True)
+
+        with r1b:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Dismissal & Dot Ball Heatmap</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">Dismissal & Play-and-Miss Densities (Where batter is vulnerable)</p></div>',
+                unsafe_allow_html=True
+            )
+
+            # Dismissal heatmap: 2d binned
+            dism_df = cur[(cur['Is_Bowler_Wicket'] == True)].copy()
+            dot_df  = cur[(cur['Runs'] == 0) & (cur['Is_Bowler_Wicket'] == False) & (cur['Is_Legal'] == True)].copy()
+
+            for d2 in [dism_df, dot_df]:
+                d2.dropna(subset=['PitchX','PitchY'], inplace=True)
+
+            dism_df = dism_df[(dism_df['PitchX'] != 0) & (dism_df['PitchY'] != 0)]
+            dot_df  = dot_df[(dot_df['PitchX'] != 0)  & (dot_df['PitchY'] != 0)]
+
+            fig_hm = go.Figure()
+
+            # Dot ball heatmap (background layer, muted)
+            if len(dot_df) > 0:
+                fig_hm.add_trace(go.Histogram2d(
+                    x=dot_df['PitchY'], y=dot_df['PitchX'],
+                    nbinsx=12, nbinsy=16,
+                    colorscale=[[0,'rgba(0,0,0,0)'],[0.3,'rgba(50,80,140,0.25)'],[1,'rgba(56,139,253,0.55)']],
+                    showscale=False, name='Dot Balls',
+                    hovertemplate="Dot zone<extra></extra>"
+                ))
+
+            # Dismissal heatmap (foreground, red)
+            if len(dism_df) > 0:
+                fig_hm.add_trace(go.Histogram2d(
+                    x=dism_df['PitchY'], y=dism_df['PitchX'],
+                    nbinsx=10, nbinsy=14,
+                    colorscale=[[0,'rgba(0,0,0,0)'],[0.2,'rgba(110,26,20,0.35)'],[0.6,'rgba(182,42,33,0.65)'],[1,'#f85149']],
+                    showscale=False, name='Dismissals',
+                    hovertemplate="Dismissal zone<extra></extra>"
+                ))
+
+            lengths = [(1.5,"Yorker"),(4.0,"Fuller"),(7.0,"Good"),(10.0,"Back L."),(13.0,"Short")]
+            for y_val, label in lengths:
+                fig_hm.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
+                fig_hm.add_annotation(x=-0.78, y=y_val, text=label, showarrow=False,
+                                       font=dict(color="#8b949e", size=9), xanchor="right")
+            fig_hm.add_vline(x=-0.114, line_color="#30363d", line_width=1)
+            fig_hm.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+
+            # Heat key legend
+            fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                marker=dict(size=10, color='#f85149', symbol='square'),
+                name='High Vulnerability (Dismissal hotspot)'))
+            fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                marker=dict(size=10, color='rgba(56,139,253,0.55)', symbol='square'),
+                name='Moderate Deficit (Dot area)'))
+            fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                marker=dict(size=10, color='rgba(30,40,50,0.8)', symbol='square'),
+                name='Safe Zone (No dismissals)'))
+
+            fig_hm.update_layout(
+                xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
+                legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center',
+                            font=dict(size=9, color='#8b949e')),
+                margin=dict(t=20,b=20,l=80,r=20), height=400
+            )
+            st.plotly_chart(fig_hm, use_container_width=True)
+
+        # ── Row 2: Matchup Breakdown + Bowling Type Breakdown ──────────
+        r2a, r2b = st.columns(2)
+
+        with r2a:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Matchup Performance Breakdown</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">Key metrics against Pace vs Spin</p></div>',
+                unsafe_allow_html=True
+            )
+
+            pace_df = slice_bat(name, season=current_season, phase=sel_phase, matchup='pace')
+            spin_df = slice_bat(name, season=current_season, phase=sel_phase, matchup='spin')
+
+            def bat_metrics(d):
+                legal = d[d['Is_Legal'] == True]
+                runs  = legal['Runs'].sum()
+                balls = len(legal)
+                return {
+                    'SR':        sr(runs, balls),
+                    'Dot Ball %': dot_pct(d),
+                    'Boundary %': boundary_pct(d),
+                }
+
+            pm = bat_metrics(pace_df)
+            sm = bat_metrics(spin_df)
+            metrics_labels = ['Strike Rate', 'Dot Ball %', 'Boundary %']
+            pm_vals = [pm['SR'], pm['Dot Ball %'], pm['Boundary %']]
+            sm_vals = [sm['SR'], sm['Dot Ball %'], sm['Boundary %']]
+
+            fig_mu = go.Figure()
+            fig_mu.add_trace(go.Bar(
+                x=metrics_labels, y=pm_vals, name='vs Pacers',
+                marker_color='#388bfd', text=[f"{v:.1f}" for v in pm_vals],
+                textposition='outside', textfont=dict(color='#c9d1d9', size=10)
+            ))
+            fig_mu.add_trace(go.Bar(
+                x=metrics_labels, y=sm_vals, name='vs Spinners',
+                marker_color='#8957e5', text=[f"{v:.1f}" for v in sm_vals],
+                textposition='outside', textfont=dict(color='#c9d1d9', size=10)
+            ))
+            fig_mu.update_layout(
+                barmode='group', template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                yaxis=dict(title="Metric Value (%)", gridcolor='#21262d', showgrid=True),
+                xaxis=dict(showgrid=False),
+                legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'),
+                margin=dict(t=30,b=20,l=40,r=20), height=380
+            )
+
+            # Stat chips below
+            st.plotly_chart(fig_mu, use_container_width=True)
+            st.markdown(
+                f"""
+                <div style="background:#11161d;border:1px solid #21262d;border-radius:6px;
+                            padding:10px 14px;font-size:11px;color:#8b949e;margin-top:-10px;">
+                    <b style="color:#c9d1d9;">🔍 Scoring & Matchup Efficiency Analysis:</b><br>
+                    Analyze how the batter's Strike Rate and boundary density compare when facing
+                    Pacers vs. Spinners. A higher peak indicates dominant matchup success.
+                    Pace SR: <b style="color:#388bfd;">{pm['SR']:.1f}</b> &nbsp;|&nbsp;
+                    Spin SR: <b style="color:#8957e5;">{sm['SR']:.1f}</b>
+                </div>
+                """, unsafe_allow_html=True
+            )
+
+        with r2b:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Bowling Type Performance Breakdown</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">Breakdown across RA/LA Pace and Spin variations</p></div>',
+                unsafe_allow_html=True
+            )
+
+            bowler_type_map = {
+                'RA Pace':   ['RF','RFM','RMF','RM'],
+                'LA Pace':   ['LF','LMF','LM'],
+                'Off-Break': ['ROB','OB'],
+                'Leg-Break': ['RLB','LB'],
+                'LA Spin':   ['LOB','LSB','SLA'],
+            }
+
+            bt_labels, bt_runs, bt_sr_vals, bt_chips = [], [], [], []
+            for label, types in bowler_type_map.items():
+                d2 = slice_bat(name, season=current_season, phase=sel_phase)
+                d2 = d2[d2['Bowler Type'].isin(types)]
+                legal = d2[d2['Is_Legal'] == True]
+                runs  = int(legal['Runs'].sum())
+                balls = len(legal)
+                sr_v  = sr(runs, balls)
+                bt_labels.append(label)
+                bt_runs.append(runs)
+                bt_sr_vals.append(sr_v)
+                bt_chips.append(f"<b>{label}:</b> {runs}r &nbsp;<span style='color:#e3b341;'>{sr_v:.0f} SR</span>")
+
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Bar(
+                x=bt_labels, y=bt_runs, name='Runs Scored',
+                marker_color='#da3644', yaxis='y1'
+            ))
+            fig_bt.add_trace(go.Scatter(
+                x=bt_labels, y=bt_sr_vals, name='Strike Rate',
+                line=dict(color='#e3b341', width=2.5),
+                marker=dict(size=8, color='#e3b341'),
+                yaxis='y2'
+            ))
+            fig_bt.update_layout(
+                template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                yaxis=dict(title="Runs Scored", side="left", showgrid=True, gridcolor='#21262d'),
+                yaxis2=dict(title="Strike Rate", overlaying="y", side="right",
+                            range=[0, max(bt_sr_vals+[1])*1.5], showgrid=False),
+                xaxis=dict(showgrid=False),
+                legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'),
+                margin=dict(t=30,b=20,l=40,r=40), height=320
+            )
+            st.plotly_chart(fig_bt, use_container_width=True)
+
+            chips_html = " &nbsp;|&nbsp; ".join(bt_chips)
+            st.markdown(
+                f'<div style="background:#11161d;border:1px solid #21262d;border-radius:6px;'
+                f'padding:10px 14px;font-size:11px;color:#8b949e;">{chips_html}</div>',
+                unsafe_allow_html=True
+            )
+
+    # ══════════════════════════════════════════════════════════════════
+    # ████████████████  BOWLER UI  ████████████████
+    # ══════════════════════════════════════════════════════════════════
+    def render_bowler_ui(name):
+
+        cur  = slice_bowl(name, season=current_season, phase=sel_phase)
+        hist = slice_bowl(name, phase=sel_phase)
+
+        cur_legal  = cur[cur['Is_Legal'] == True]
+        hist_legal = hist[hist['Is_Legal'] == True]
+
+        cur_wkts  = int(cur['Is_Bowler_Wicket'].sum())
+        cur_balls = len(cur_legal)
+        cur_runs  = int(cur['Runs'].sum()) + int(cur['Bowler Extra Runs'].sum() if 'Bowler Extra Runs' in cur.columns else 0)
+        cur_econ  = econ(cur_runs, cur_balls)
+        cur_bsr   = cur_balls / max(cur_wkts, 1)
+        cur_dots  = dot_pct(cur)
+
+        # ── KPI Cards ─────────────────────────────────────────────────
+        c1, c2, c3, c4 = st.columns(4)
+        for col, title, fmt in [
+            (c1, "WICKETS",     f"{cur_wkts}"),
+            (c2, "ECON RATE",   f"{cur_econ:.2f}"),
+            (c3, "STRIKE RATE", f"{cur_bsr:.1f}"),
+            (c4, "DOT BALL %",  f"{cur_dots:.1f}%"),
+        ]:
+            col.markdown(
+                f"""
+                <div style="background:#11161d;border:1px solid #1f6e43;border-radius:8px;
+                            padding:18px;text-align:center;margin-bottom:12px;">
+                    <p style="margin:0;font-size:10px;color:#8b949e;font-weight:700;
+                              letter-spacing:.07em;">{title}</p>
+                    <h2 style="margin:8px 0 0 0;font-size:32px;color:#fff;font-family:monospace;">
+                        {fmt}
+                    </h2>
+                </div>
+                """, unsafe_allow_html=True
+            )
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        # ── Row 1: Release Point Scatter + Intent vs Execution ────────
+        r1a, r1b = st.columns(2)
+
+        with r1a:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Release Point Scatter Plot</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">'
+                'Frontal consistency scatter: Hand height (Z) and release width (Y)</p></div>',
+                unsafe_allow_html=True
+            )
+
+            rel_df = cur.dropna(subset=['ReleaseY']).copy()
+            rel_df = rel_df[(rel_df['ReleaseZ'] != 0) & (rel_df['ReleaseY'] != 0)]
+            rel_df = rel_df.dropna(subset=['ReleaseZ'])
+
+            # -----------------------------
+            # Remove extreme outliers (top/bottom 1%)
+            # -----------------------------
+            if len(rel_df) > 10:   # Only apply if enough deliveries
+                lower_y, upper_y = rel_df['ReleaseY'].quantile([0.01, 0.99])
+                lower_z, upper_z = rel_df['ReleaseZ'].quantile([0.01, 0.99])
+
+                rel_df = rel_df[
+                    rel_df['ReleaseY'].between(lower_y, upper_y) &
+                    rel_df['ReleaseZ'].between(lower_z, upper_z)
+                ]
+
+            def ball_category(row):
+                if row['Is_Bowler_Wicket']:
+                    return 'Wicket'
+                elif row['Runs'] == 0:
+                    return 'Dot'
+                elif row['Runs'] >= 4:
+                    return 'Boundary'
+                else:
+                    return 'Single/Double'
+
+            if len(rel_df) > 0:
+                rel_df['BallCat'] = rel_df.apply(ball_category, axis=1)
+                cat_color = {
+                    'Dot':          '#2ea043',
+                    'Wicket':       '#2ea043',
+                    'Single/Double':'#8b949e',
+                    'Boundary':     '#f85149',
+                }
+
+                fig_rp = go.Figure()
+
+                for cat, color in cat_color.items():
+                    sub = rel_df[rel_df['BallCat'] == cat]
+                    if len(sub) == 0:
+                        continue
+
+                    label = (
+                        'Dots / Wicket Balls' if cat in ['Dot', 'Wicket']
+                        else 'Singles / Doubles' if cat == 'Single/Double'
+                        else 'Boundaries Conceded'
+                    )
+
+                    fig_rp.add_trace(go.Scatter(
+                        x=sub['ReleaseY'],
+                        y=sub['ReleaseZ'],
+                        mode='markers',
+                        marker=dict(
+                            size=6,
+                            color=color,
+                            opacity=0.7,
+                            line=dict(width=0.5, color='rgba(0,0,0,0.3)')
+                        ),
+                        name=label
+                    ))
+
+                fig_rp.update_layout(
+                    xaxis=dict(
+                        title="Horizontal Release Width (meters)",
+                        showgrid=True,
+                        gridcolor='#21262d',
+                        zeroline=True,
+                        zerolinecolor='#30363d'
+                    ),
+                    yaxis=dict(
+                        title="Vertical Release Height (meters)",
+                        showgrid=True,
+                        gridcolor='#21262d',
+                        zeroline=False
+                    ),
+                    template='plotly_dark',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='#0d1117',
+                    legend=dict(
+                        orientation='h',
+                        y=-0.2,
+                        x=0.5,
+                        xanchor='center',
+                        font=dict(size=10)
+                    ),
+                    margin=dict(t=20, b=20, l=60, r=20),
+                    height=400
+                )
+
+                st.plotly_chart(fig_rp, use_container_width=True)
+
+                st.markdown(
+                    '<div style="background:#11161d;border:1px solid #21262d;border-radius:6px;'
+                    'padding:10px 14px;font-size:11px;color:#8b949e;margin-top:-10px;">'
+                    '💡 <b style="color:#c9d1d9;">How to Read Release Points:</b> '
+                    'A tight cluster indicates high consistency in release coordinates. '
+                    'A wider scatter indicates variance in height and width.</div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.info("No release point data available for this bowler in the selected filters.")
+                
+        with r1b:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Intent vs. Execution Pitch Maps</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">'
+                'Planned target zone vs actual landing spot dispersion</p></div>',
+                unsafe_allow_html=True
+            )
+
+            pitch_df = cur.dropna(subset=['PitchX','PitchY']).copy()
+            pitch_df = pitch_df[(pitch_df['PitchX'] != 0) & (pitch_df['PitchY'] != 0)]
+
+            col_intent, col_exec = st.columns(2)
+
+            # ── Intent plot: dense target zone as variance rectangle ──
+            with col_intent:
+                st.markdown("<p style='text-align:center;font-size:10px;color:#8b949e;font-weight:700;margin:0;'>1. INTENDED ZONE</p>", unsafe_allow_html=True)
+                fig_int = go.Figure()
+
+                if len(pitch_df) > 5:
+                    mx  = pitch_df['PitchY'].mean()
+                    my  = pitch_df['PitchX'].mean()
+                    sdx = pitch_df['PitchY'].std()
+                    sdy = pitch_df['PitchX'].std()
+                    # 1-sigma box
+                    fig_int.add_shape(
+                        type='rect',
+                        x0=mx - sdx, x1=mx + sdx,
+                        y0=my - sdy, y1=my + sdy,
+                        line=dict(color='#2ea043', width=2, dash='dot'),
+                        fillcolor='rgba(46,160,67,0.15)'
+                    )
+                    fig_int.add_annotation(
+                        x=mx, y=my + sdy + 0.4,
+                        text="TARGET", showarrow=False,
+                        font=dict(color='#2ea043', size=9, weight='bold')
+                    )
+                    fig_int.add_trace(go.Scatter(
+                        x=[mx], y=[my], mode='markers',
+                        marker=dict(size=8, color='#2ea043', symbol='cross'),
+                        showlegend=False
+                    ))
+
+                lengths = [(1.5,"Yorker"),(4.0,"Full"),(7.0,"Good"),(10.0,"Back L."),(13.0,"Short")]
+                for y_val, label in lengths:
+                    fig_int.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
+                    fig_int.add_annotation(x=-0.82, y=y_val, text=label, showarrow=False,
+                                           font=dict(color="#8b949e",size=8), xanchor="right")
+                fig_int.add_vline(x=-0.114, line_color="#30363d", line_width=1)
+                fig_int.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+                fig_int.update_layout(
+                    xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
+                    margin=dict(t=10,b=10,l=70,r=5), height=360, showlegend=False
+                )
+                st.plotly_chart(fig_int, use_container_width=True)
+
+            # ── Execution plot: actual delivery scatter coloured by outcome ──
+            with col_exec:
+                st.markdown("<p style='text-align:center;font-size:10px;color:#8b949e;font-weight:700;margin:0;'>2. EXECUTED DELIVERIES</p>", unsafe_allow_html=True)
+                fig_ex = go.Figure()
+
+                if len(pitch_df) > 0:
+                    pitch_df2 = pitch_df.copy()
+                    pitch_df2['BallCat'] = pitch_df2.apply(ball_category, axis=1)
+                    cat_color_map = {
+                        'Dot':          ('#2ea043', 'circle',   'Dot/Wicket'),
+                        'Wicket':       ('#2ea043', 'x',        'Dot/Wicket'),
+                        'Single/Double':('#8b949e', 'circle',   'Single/Double'),
+                        'Boundary':     ('#f85149', 'diamond',  'Boundary'),
+                    }
+                    shown = set()
+                    for cat, (color, symbol, leg) in cat_color_map.items():
+                        sub = pitch_df2[pitch_df2['BallCat'] == cat]
+                        if len(sub) == 0: continue
+                        fig_ex.add_trace(go.Scatter(
+                            x=sub['PitchY'], y=sub['PitchX'], mode='markers',
+                            marker=dict(size=5, color=color, symbol=symbol,
+                                        opacity=0.75, line=dict(width=0.3, color='rgba(0,0,0,0.4)')),
+                            name=leg if leg not in shown else None,
+                            showlegend=(leg not in shown)
+                        ))
+                        shown.add(leg)
+
+                for y_val, label in lengths:
+                    fig_ex.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
+                    fig_ex.add_annotation(x=-0.82, y=y_val, text=label, showarrow=False,
+                                          font=dict(color="#8b949e",size=8), xanchor="right")
+                fig_ex.add_vline(x=-0.114, line_color="#30363d", line_width=1)
+                fig_ex.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+                fig_ex.update_layout(
+                    xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
+                    legend=dict(orientation='h', y=-0.08, x=0.5, xanchor='center', font=dict(size=8)),
+                    margin=dict(t=10,b=10,l=5,r=5), height=360
+                )
+                st.plotly_chart(fig_ex, use_container_width=True)
+
+            # Dense zone label
+            if len(pitch_df) > 5:
+                target_length_val = pitch_df['PitchX'].mean()
+                tgt_label = "Yorker" if target_length_val < 2 else \
+                            "Full"   if target_length_val < 5 else \
+                            "Good Length" if target_length_val < 8 else \
+                            "Back of Length" if target_length_val < 11 else "Short"
+                st.markdown(
+                    f'<p style="font-size:11px;color:#8b949e;margin-top:4px;">'
+                    f'💡 Hover on coordinates to see ball details. '
+                    f'Target Zone: <span style="color:#2ea043;font-weight:600;">{tgt_label} (Pace Plan)</span>.</p>',
+                    unsafe_allow_html=True
+                )
+
+        # ── Row 2: Length Stacked Bar + Phase Performance Profile ──────
+        r2a, r2b = st.columns(2)
+
+        with r2a:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Length Stacked Bar</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">'
+                'Dispersion profile: % of each length by match phase</p></div>',
+                unsafe_allow_html=True
+            )
+
+            valid_lengths = ['Yorker','Full','Good Length','Back Of Length','Short']
+            length_color  = {'Yorker':'#f85149','Full':'#f0883e','Good Length':'#2ea043',
+                             'Back Of Length':'#388bfd','Short':'#8957e5'}
+
+            phase_labels_sb = ['PP (Overs 1-6)', 'Mid (Overs 7-15)', 'Death (Overs 16-20)']
+            phase_keys_sb   = ['PP', 'Mid', 'Death']
+
+            fig_len = go.Figure()
+            for length in valid_lengths:
+                pcts = []
+                for ph in phase_keys_sb:
+                    ph_df = hist[hist['Match_Phase'] == ph]
+                    ph_df = ph_df[~ph_df['Length'].isin(['nan','Length','Unknown'])]
+                    total = max(len(ph_df), 1)
+                    count = len(ph_df[ph_df['Length'].str.strip().str.title() == length.title()])
+                    pcts.append((count / total) * 100)
+                fig_len.add_trace(go.Bar(
+                    x=phase_labels_sb, y=pcts, name=length,
+                    marker_color=length_color.get(length, '#8b949e')
+                ))
+
+            fig_len.update_layout(
+                barmode='stack', template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                yaxis=dict(title="Percentage (%)", range=[0,100], gridcolor='#21262d'),
+                xaxis=dict(showgrid=False),
+                legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center', font=dict(size=10)),
+                margin=dict(t=30,b=20,l=40,r=20), height=380
+            )
+            st.plotly_chart(fig_len, use_container_width=True)
+            st.markdown(
+                '<div style="background:#11161d;border:1px solid #21262d;border-radius:6px;'
+                'padding:10px 14px;font-size:11px;color:#8b949e;">'
+                '<b style="color:#c9d1d9;">How to Read this Chart:</b> Displays the percentage of '
+                'deliveries bowled at each length (Yorker, Full, Good, Short) across different match '
+                'phases. Visualises the length distribution strategy in PP, Mid, and Death overs.</div>',
+                unsafe_allow_html=True
+            )
+
+        with r2b:
+            st.markdown(
+                '<div class="sub-card"><h4 style="margin:0;">Phase-by-Phase Performance Profile</h4>'
+                '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">'
+                'Wickets and economy rate across Powerplay, Middle, Death</p></div>',
+                unsafe_allow_html=True
+            )
+
+            ph_labels_pp = ['Powerplay (Ovs 1-6)', 'Middle (Ovs 7-15)', 'Death (Ovs 16-20)']
+            ph_keys_pp   = ['PP', 'Mid', 'Death']
+            wkts_per_phase, econ_per_phase = [], []
+
+            for ph in ph_keys_pp:
+                ph_d = cur[cur['Match_Phase'] == ph]
+                ph_l = ph_d[ph_d['Is_Legal'] == True]
+                w    = int(ph_d['Is_Bowler_Wicket'].sum())
+                r    = float(ph_d['Runs'].sum())
+                ext  = float(ph_d['Bowler Extra Runs'].sum()) if 'Bowler Extra Runs' in ph_d.columns else 0
+                b    = max(len(ph_l), 1)
+                wkts_per_phase.append(w)
+                econ_per_phase.append(econ(r + ext, b))
+
+            fig_pp = go.Figure()
+            fig_pp.add_trace(go.Bar(
+                x=ph_labels_pp, y=wkts_per_phase, name='Wickets',
+                marker_color='#2ea043', yaxis='y1',
+                text=wkts_per_phase, textposition='outside',
+                textfont=dict(color='white', size=11)
+            ))
+            fig_pp.add_trace(go.Scatter(
+                x=ph_labels_pp, y=econ_per_phase, name='Economy Rate',
+                line=dict(color='#ffa500', width=2.5),
+                marker=dict(size=9, color='#ffa500'),
+                yaxis='y2'
+            ))
+            fig_pp.update_layout(
+                template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                yaxis=dict(title="Wickets", side='left', showgrid=True, gridcolor='#21262d',
+                           range=[0, max(wkts_per_phase+[1])*1.5]),
+                yaxis2=dict(title="Economy Rate", overlaying='y', side='right',
+                            range=[0, max(econ_per_phase+[1])*1.5], showgrid=False),
+                xaxis=dict(showgrid=False),
+                legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'),
+                margin=dict(t=30,b=20,l=40,r=40), height=380
+            )
+            st.plotly_chart(fig_pp, use_container_width=True)
+            st.markdown(
+                '<div style="background:#11161d;border:1px solid #21262d;border-radius:6px;'
+                'padding:10px 14px;font-size:11px;color:#8b949e;">'
+                '<b style="color:#c9d1d9;">How to Read this Chart:</b> Compares economy rates and '
+                'wickets taken across Powerplay, Middle, and Death phases. '
+                'Visualises phase-specific effectiveness and containment ability.</div>',
+                unsafe_allow_html=True
+            )
+
+    # ══════════════════════════════════════════════════════════════════
+    # DISPATCH: render correct UI based on role
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+
+    if player_role == 'Allrounder':
+        bat_tab, bowl_tab = st.tabs(["🏏 Batting Analysis", "🎳 Bowling Analysis"])
+        with bat_tab:
+            render_batter_ui(selected_hub_player)
+        with bowl_tab:
+            render_bowler_ui(selected_hub_player)
+    elif player_role == 'Bowler':
+        render_bowler_ui(selected_hub_player)
+    else:
+        render_batter_ui(selected_hub_player)
