@@ -217,7 +217,7 @@ def build_dismissal_landing_spots(dataframe, player_name):
 def build_polar_wagon_wheel(dataframe, player_name):
     player_df = dataframe[(dataframe['Batter'] == player_name) & (dataframe['Is_Legal'] == True)].copy()
     player_df = player_df.dropna(subset=['FieldX', 'FieldY'])
-    player_df = player_df[(player_df['FieldX'] != 0) & (player_df['FieldY'] != 0)]
+    player_df = player_df[(player_df['FieldX'].notnull()) & (player_df['FieldY'].notnull())]
     
     if len(player_df) == 0: return go.Figure()
     
@@ -266,27 +266,105 @@ def build_bowler_topography(dataframe, bowler_name, plot_mode):
     bowler_df = bowler_df[(bowler_df['PitchX'].notnull()) & (bowler_df['PitchY'].notnull())]
     
     fig = go.Figure()
+    
     if plot_mode == "Heatmap" and len(bowler_df) > 0:
         fig.add_trace(go.Histogram2d(
             x=bowler_df['PitchY'], y=bowler_df['PitchX'], nbinsx=30, nbinsy=40,
             colorscale=[[0.0, 'rgba(13,17,23,0)'], [0.05, 'rgba(110,26,20,0.2)'], [0.3, '#6e1a14'], [0.6, '#b62a21'], [1.0, '#f85149']],
             showscale=False, hovertemplate="Line: %{x:.2f}m<br>Length: %{y:.1f}m<br>Balls Landed: %{z}<extra></extra>"
         ))
+        show_legend_toggle = False
+        
+    elif len(bowler_df) > 0:
+        # --- Create Outcome Buckets for Grouped Scatter Legend ---
+        conditions = [
+            (bowler_df['Is_Bowler_Wicket'] == True),
+            (bowler_df['Runs'] == 0),
+            (bowler_df['Runs'].isin([1, 2, 3])),
+            (bowler_df['Runs'].isin([4, 6]))
+        ]
+        choices = ['Wicket (Out)', 'Dot Ball (0 runs)', '1-3 Runs', 'Boundary (4s/6s)']
+        bowler_df['Outcome_Category'] = np.select(conditions, choices, default='Other')
+        
+        # Style configuration matrix matching the required markers & colors
+        scatter_styles = {
+            'Wicket (Out)': dict(symbol='x', color='#FF4B4B', size=11),
+            'Dot Ball (0 runs)': dict(symbol='circle', color='#8b949e', size=7),
+            '1-3 Runs': dict(symbol='circle', color='#388bfd', size=8),
+            'Boundary (4s/6s)': dict(symbol='diamond', color='#ffa500', size=9),
+            'Other': dict(symbol='circle', color='#58a6ff', size=7)
+        }
+        
+        # Add individual traces sequentially so Plotly automatically generates the interactive legend items
+        for cat in choices + (['Other'] if 'Other' in bowler_df['Outcome_Category'].values else []):
+            cat_df = bowler_df[bowler_df['Outcome_Category'] == cat]
+            if len(cat_df) > 0:
+                style = scatter_styles[cat]
+                fig.add_trace(go.Scatter(
+                    x=cat_df['PitchY'], y=cat_df['PitchX'],
+                    mode='markers',
+                    name=cat,
+                    marker=dict(
+                        symbol=style['symbol'],
+                        size=style['size'],
+                        color=style['color'],
+                        opacity=0.85
+                    ),
+                    hovertemplate=f"<b>Outcome: {cat}</b><br>Line: %{{x:.3f}}m<br>Length: %{{y:.1f}}m<br>Runs: %{{customdata}}<extra></extra>",
+                    customdata=cat_df['Runs']
+                ))
+        show_legend_toggle = True
     else:
-        fig.add_trace(go.Scatter(x=bowler_df['PitchY'], y=bowler_df['PitchX'], mode='markers', marker=dict(size=6, color='#f85149', opacity=0.6, line=dict(width=0)), name='Deliveries'))
+        show_legend_toggle = False
 
-    lengths = [(1.5, "Yorker"), (4.0, "Full"), (7.0, "Good"), (10.0, "Back L."), (13.0, "Short")]
+    # ── Pitch Length Shaded Grid Lines ─────────────────────────────────
+    lengths = [
+        (1.5,  "Yorker"),
+        (4.0,  "Full"),
+        (7.0,  "Good"),
+        (10.0, "Back Of Length"),
+        (13.0, "Short"),
+        (16.0, "Bouncer"),
+    ]
     for y_val, label in lengths:
-        fig.add_hline(y=y_val, line_dash="dash", line_color="#2c313c", line_width=1.5)
-        fig.add_annotation(x=-0.75, y=y_val, text=label, showarrow=False, font=dict(color="#8b949e", size=10), xanchor="right")
+        fig.add_hline(y=y_val, line_dash="dash", line_color="#222c3c", line_width=1)
+        fig.add_annotation(
+            x=-1.88, y=y_val, text=label,
+            showarrow=False,
+            font=dict(color="#8b949e", size=10),
+            xanchor="right", yanchor="middle"
+        )
 
-    stump_threshold = 0.114
-    fig.add_vline(x=-stump_threshold, line_dash="solid", line_color="#30363d", line_width=1.5)
-    fig.add_vline(x=stump_threshold, line_dash="solid", line_color="#30363d", line_width=1.5)
-    
-    fig.update_layout(xaxis=dict(range=[-1.0, 1.0], showticklabels=False, showgrid=False, zeroline=False),
-                      yaxis=dict(range=[0, 16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
-                      paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#11161d', margin=dict(t=20, b=40, l=80, r=40), height=380)
+    # ── Stump lines ────────────────────────────────────────────────────
+    stump_w = 0.114
+    fig.add_vline(x=-stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+    fig.add_vline(x= stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+
+    # ── Wide Tramlines & Sub-corridor shading ──────────────────────────
+    wide_w = 0.89
+    fig.add_vline(x=-wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+    fig.add_vline(x= wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+    fig.add_vrect(x0=-1.9, x1=-wide_w, fillcolor="rgba(248,81,73,0.02)", line_width=0)
+    fig.add_vrect(x0= wide_w, x1=1.9,  fillcolor="rgba(248,81,73,0.02)", line_width=0)
+
+    # ── Layout Configuration ───────────────────────────────────────────
+    fig.update_layout(
+        xaxis=dict(range=[-1.9, 1.9], showticklabels=False, showgrid=False, zeroline=False),
+        yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#11161d',
+        margin=dict(t=15, b=15, l=140, r=30),
+        height=400,
+        showlegend=show_legend_toggle,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(color="#8b949e", size=11)
+        )
+    )
     return fig
 
 
@@ -313,7 +391,7 @@ def compute_gap_density_metrics(df, batter, adjusted_fielders):
     
     bat_df = df[(df['Batter'] == batter) & (df['Is_Legal'] == True)].copy()
     bat_df = bat_df.dropna(subset=['FieldX', 'FieldY'])
-    bat_df = bat_df[(bat_df['FieldX'] != 0) & (bat_df['FieldY'] != 0)]
+    bat_df = bat_df[(bat_df['FieldX'].notnull()) & (bat_df['FieldY'].notnull())]
     
     runs_infield = {cat: 0.0 for cat in categories}
     runs_boundary = {cat: 0.0 for cat in categories}
@@ -1812,7 +1890,7 @@ with tab_hub:
                 # Filter for legal deliveries and valid coordinates
                 d2 = d[d['Is_Legal'] == True].copy()
                 d2 = d2.dropna(subset=['FieldX','FieldY'])
-                d2 = d2[(d2['FieldX'] != 0) & (d2['FieldY'] != 0)]
+                d2 = d2[(d2['FieldX'].notnull()) & (d2['FieldY'].notnull())]
 
                 if len(d2) == 0:
                     return {l: 0.0 for l in labels}
@@ -1883,67 +1961,96 @@ with tab_hub:
                 unsafe_allow_html=True
             )
 
-            # Dismissal heatmap: 2d binned
+            # 1. Separate datasets and drop null telemetry coordinates
             dism_df = cur[(cur['Is_Bowler_Wicket'] == True)].copy()
             dot_df  = cur[(cur['Runs'] == 0) & (cur['Is_Bowler_Wicket'] == False) & (cur['Is_Legal'] == True)].copy()
 
             for d2 in [dism_df, dot_df]:
                 d2.dropna(subset=['PitchX','PitchY'], inplace=True)
 
-            dism_df = dism_df[(dism_df['PitchX'] != 0) & (dism_df['PitchY'] != 0)]
-            dot_df  = dot_df[(dot_df['PitchX'] != 0)  & (dot_df['PitchY'] != 0)]
+            dism_df = dism_df[(dism_df['PitchX'].notnull()) & (dism_df['PitchY'].notnull())]
+            dot_df  = dot_df[(dot_df['PitchX'].notnull())  & (dot_df['PitchY'].notnull())]
 
             fig_hm = go.Figure()
 
-            # Dot ball heatmap (background layer, muted)
+            # 2. Dot ball density heatmap layer (Fine-mesh micro-bins)
             if len(dot_df) > 0:
                 fig_hm.add_trace(go.Histogram2d(
                     x=dot_df['PitchY'], y=dot_df['PitchX'],
-                    nbinsx=12, nbinsy=16,
-                    colorscale=[[0,'rgba(0,0,0,0)'],[0.3,'rgba(50,80,140,0.25)'],[1,'rgba(56,139,253,0.55)']],
+                    # Explicitly force fine, tightly packed, symmetric mathematical boundaries
+                    xbins=dict(start=-1.9, end=1.9, size=0.12),  # 12cm width intervals across the tramlines
+                    ybins=dict(start=0.0, end=18.0, size=0.4),    # 40cm length depth intervals down the pitch
+                    colorscale=[[0, 'rgba(13,17,23,0)'], [0.2, 'rgba(56,139,253,0.15)'], [0.6, 'rgba(56,139,253,0.4)'], [1.0, 'rgba(56,139,253,0.7)']],
                     showscale=False, name='Dot Balls',
-                    hovertemplate="Dot zone<extra></extra>"
+                    hovertemplate="Dot Zone<br>Line: %{x:.2f}m<br>Length: %{y:.1f}m<extra></extra>"
                 ))
 
-            # Dismissal heatmap (foreground, red)
+            # 3. Dismissal density heatmap layer (Fine-mesh foreground hotspot)
             if len(dism_df) > 0:
                 fig_hm.add_trace(go.Histogram2d(
                     x=dism_df['PitchY'], y=dism_df['PitchX'],
-                    nbinsx=10, nbinsy=14,
-                    colorscale=[[0,'rgba(0,0,0,0)'],[0.2,'rgba(110,26,20,0.35)'],[0.6,'rgba(182,42,33,0.65)'],[1,'#f85149']],
+                    xbins=dict(start=-1.9, end=1.9, size=0.15),  # Sharpened localization bins
+                    ybins=dict(start=0.0, end=18.0, size=0.5),
+                    colorscale=[[0, 'rgba(13,17,23,0)'], [0.15, 'rgba(110,26,20,0.3)'], [0.5, 'rgba(182,42,33,0.65)'], [1.0, '#f85149']],
                     showscale=False, name='Dismissals',
-                    hovertemplate="Dismissal zone<extra></extra>"
+                    hovertemplate="Dismissal Hotspot<br>Line: %{x:.2f}m<br>Length: %{y:.1f}m<extra></extra>"
                 ))
 
-            lengths = [(1.5,"Yorker"),(4.0,"Fuller"),(7.0,"Good"),(10.0,"Back L."),(13.0,"Short")]
+            # 4. Pitch Length Grid Lines & Formatting Aligned to -1.88
+            lengths = [
+                (1.5,  "Yorker"),
+                (4.0,  "Fuller"),
+                (7.0,  "Good"),
+                (10.0, "Back L."),
+                (13.0, "Short"),
+                (16.0, "Bouncer"),
+            ]
             for y_val, label in lengths:
-                fig_hm.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
-                fig_hm.add_annotation(x=-0.78, y=y_val, text=label, showarrow=False,
-                                       font=dict(color="#8b949e", size=9), xanchor="right")
-            fig_hm.add_vline(x=-0.114, line_color="#30363d", line_width=1)
-            fig_hm.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+                fig_hm.add_hline(y=y_val, line_dash="dash", line_color="#222c3c", line_width=1)
+                fig_hm.add_annotation(x=-1.88, y=y_val, text=label, showarrow=False,
+                                       font=dict(color="#8b949e", size=9), xanchor="right", yanchor="middle")
 
-            # Heat key legend
+            # 5. Structural Crease Lines (Stumps & Tramlines)
+            stump_w = 0.114
+            wide_w = 0.89
+            fig_hm.add_vline(x=-stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+            fig_hm.add_vline(x= stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+            fig_hm.add_vline(x=-wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+            fig_hm.add_vline(x= wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+
+            fig_hm.add_vrect(x0=-1.9, x1=-wide_w, fillcolor="rgba(248,81,73,0.01)", line_width=0)
+            fig_hm.add_vrect(x0= wide_w, x1=1.9,  fillcolor="rgba(248,81,73,0.01)", line_width=0)
+
+            # 6. Interactive Heat Key Mock Legend Entries (Clean Square Traces)
             fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                marker=dict(size=10, color='#f85149', symbol='square'),
+                marker=dict(size=12, color='#f85149', symbol='square'),
                 name='High Vulnerability (Dismissal hotspot)'))
+
             fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                marker=dict(size=10, color='rgba(56,139,253,0.55)', symbol='square'),
+                marker=dict(size=12, color='#388bfd', symbol='square'),
                 name='Moderate Deficit (Dot area)'))
+
             fig_hm.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                marker=dict(size=10, color='rgba(30,40,50,0.8)', symbol='square'),
+                marker=dict(size=12, color='#21262d', symbol='square'),
                 name='Safe Zone (No dismissals)'))
 
+            # 7. Global Layout Constraints
             fig_hm.update_layout(
-                xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
-                yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
-                legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center',
-                            font=dict(size=9, color='#8b949e')),
-                margin=dict(t=20,b=20,l=80,r=20), height=400
+                xaxis=dict(range=[-1.9, 1.9], showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#11161d',
+                legend=dict(
+                    orientation='h', 
+                    y=-0.08, 
+                    x=0.5, 
+                    xanchor='center',
+                    font=dict(size=9, color='#8b949e'),
+                    itemclick=False,
+                    itemdoubleclick=False
+                ),
+                margin=dict(t=15, b=15, l=120, r=30), height=400
             )
             st.plotly_chart(fig_hm, use_container_width=True)
-
         # ── Row 2: Matchup Breakdown + Bowling Type Breakdown ──────────
         r2a, r2b = st.columns(2)
 
@@ -2110,6 +2217,7 @@ with tab_hub:
         r1a, r1b = st.columns(2)
 
         with r1a:
+
             st.markdown(
                 '<div class="sub-card"><h4 style="margin:0;">Release Point Scatter Plot</h4>'
                 '<p style="margin:2px 0 0;color:#8b949e;font-size:11px;">'
@@ -2118,40 +2226,46 @@ with tab_hub:
             )
 
             rel_df = cur.dropna(subset=['ReleaseY']).copy()
-            rel_df = rel_df[(rel_df['ReleaseZ'] != 0) & (rel_df['ReleaseY'] != 0)]
+            rel_df = rel_df[(rel_df['ReleaseZ'].notnull()) & (rel_df['ReleaseY'].notnull())]
             rel_df = rel_df.dropna(subset=['ReleaseZ'])
 
             # -----------------------------
-            # Remove extreme outliers (top/bottom 1%)
-            # -----------------------------
-            if len(rel_df) > 10:   # Only apply if enough deliveries
-                lower_y, upper_y = rel_df['ReleaseY'].quantile([0.01, 0.99])
-                lower_z, upper_z = rel_df['ReleaseZ'].quantile([0.01, 0.99])
 
+            # Remove extreme outliers (top/bottom 1%)
+
+            # -----------------------------
+
+            if len(rel_df) > 10:   # Only apply if enough deliveries
+
+                lower_y, upper_y = rel_df['ReleaseY'].quantile([0.01, 0.99])
+
+                lower_z, upper_z = rel_df['ReleaseZ'].quantile([0.01, 0.99])
                 rel_df = rel_df[
                     rel_df['ReleaseY'].between(lower_y, upper_y) &
                     rel_df['ReleaseZ'].between(lower_z, upper_z)
                 ]
-
+                
             def ball_category(row):
-                if row['Is_Bowler_Wicket']:
-                    return 'Wicket'
-                elif row['Runs'] == 0:
-                    return 'Dot'
+                if row['Is_Bowler_Wicket'] or row['Runs'] == 0:
+                    return 'Wicket/Dot'
+#                 elif row['Runs'] == 0:
+
+#                     return 'Dot'
                 elif row['Runs'] >= 4:
                     return 'Boundary'
                 else:
                     return 'Single/Double'
 
             if len(rel_df) > 0:
+                
                 rel_df['BallCat'] = rel_df.apply(ball_category, axis=1)
                 cat_color = {
                     'Dot':          '#2ea043',
-                    'Wicket':       '#2ea043',
+                    'Wicket/Dot':       '#2ea043',
                     'Single/Double':'#8b949e',
                     'Boundary':     '#f85149',
                 }
-
+                
                 fig_rp = go.Figure()
 
                 for cat, color in cat_color.items():
@@ -2160,7 +2274,7 @@ with tab_hub:
                         continue
 
                     label = (
-                        'Dots / Wicket Balls' if cat in ['Dot', 'Wicket']
+                        'Dots / Wicket Balls' if cat in ['Dot', 'Wicket/Dot']
                         else 'Singles / Doubles' if cat == 'Single/Double'
                         else 'Boundaries Conceded'
                     )
@@ -2174,27 +2288,38 @@ with tab_hub:
                             color=color,
                             opacity=0.7,
                             line=dict(width=0.5, color='rgba(0,0,0,0.3)')
+
                         ),
+
                         name=label
+
                     ))
 
                 fig_rp.update_layout(
+
                     xaxis=dict(
                         title="Horizontal Release Width (meters)",
                         showgrid=True,
                         gridcolor='#21262d',
                         zeroline=True,
                         zerolinecolor='#30363d'
+
                     ),
+
                     yaxis=dict(
                         title="Vertical Release Height (meters)",
                         showgrid=True,
                         gridcolor='#21262d',
                         zeroline=False
+
                     ),
+
                     template='plotly_dark',
+
                     paper_bgcolor='rgba(0,0,0,0)',
+
                     plot_bgcolor='#0d1117',
+
                     legend=dict(
                         orientation='h',
                         y=-0.2,
@@ -2204,10 +2329,10 @@ with tab_hub:
                     ),
                     margin=dict(t=20, b=20, l=60, r=20),
                     height=400
+
                 )
 
                 st.plotly_chart(fig_rp, use_container_width=True)
-
                 st.markdown(
                     '<div style="background:#11161d;border:1px solid #21262d;border-radius:6px;'
                     'padding:10px 14px;font-size:11px;color:#8b949e;margin-top:-10px;">'
@@ -2228,9 +2353,21 @@ with tab_hub:
             )
 
             pitch_df = cur.dropna(subset=['PitchX','PitchY']).copy()
-            pitch_df = pitch_df[(pitch_df['PitchX'] != 0) & (pitch_df['PitchY'] != 0)]
+            pitch_df = pitch_df[(pitch_df['PitchX'].notnull()) & (pitch_df['PitchY'].notnull())]
 
             col_intent, col_exec = st.columns(2)
+
+            # Base pitch configuration components shared across both maps
+            lengths = [
+                (1.5,  "Yorker"),
+                (4.0,  "Full"),
+                (7.0,  "Good"),
+                (10.0, "Back Of Length"),
+                (13.0, "Short"),
+                (16.0, "Bouncer"),
+            ]
+            stump_w = 0.114
+            wide_w = 0.89
 
             # ── Intent plot: dense target zone as variance rectangle ──
             with col_intent:
@@ -2242,7 +2379,8 @@ with tab_hub:
                     my  = pitch_df['PitchX'].mean()
                     sdx = pitch_df['PitchY'].std()
                     sdy = pitch_df['PitchX'].std()
-                    # 1-sigma box
+
+                    # 1-sigma target box
                     fig_int.add_shape(
                         type='rect',
                         x0=mx - sdx, x1=mx + sdx,
@@ -2261,21 +2399,28 @@ with tab_hub:
                         showlegend=False
                     ))
 
-                lengths = [(1.5,"Yorker"),(4.0,"Full"),(7.0,"Good"),(10.0,"Back L."),(13.0,"Short")]
+                # Build Pitch Superstructure
                 for y_val, label in lengths:
-                    fig_int.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
-                    fig_int.add_annotation(x=-0.82, y=y_val, text=label, showarrow=False,
-                                           font=dict(color="#8b949e",size=8), xanchor="right")
-                fig_int.add_vline(x=-0.114, line_color="#30363d", line_width=1)
-                fig_int.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+                    fig_int.add_hline(y=y_val, line_dash="dash", line_color="#222c3c", line_width=1)
+                    fig_int.add_annotation(x=-1.88, y=y_val, text=label, showarrow=False,
+                                           font=dict(color="#8b949e", size=8), xanchor="right", yanchor="middle")
+
+                fig_int.add_vline(x=-stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+                fig_int.add_vline(x= stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+                fig_int.add_vline(x=-wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+                fig_int.add_vline(x= wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+                fig_int.add_vrect(x0=-1.9, x1=-wide_w, fillcolor="rgba(248,81,73,0.02)", line_width=0)
+                fig_int.add_vrect(x0= wide_w, x1=1.9,  fillcolor="rgba(248,81,73,0.02)", line_width=0)
+
                 fig_int.update_layout(
-                    xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
-                    yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
-                    margin=dict(t=10,b=10,l=70,r=5), height=360, showlegend=False
+                    xaxis=dict(range=[-1.9, 1.9], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#11161d',
+                    margin=dict(t=10, b=10, l=100, r=5), height=380, showlegend=False
                 )
                 st.plotly_chart(fig_int, use_container_width=True)
 
+            # ── Execution plot: actual delivery scatter coloured by outcome ──
             # ── Execution plot: actual delivery scatter coloured by outcome ──
             with col_exec:
                 st.markdown("<p style='text-align:center;font-size:10px;color:#8b949e;font-weight:700;margin:0;'>2. EXECUTED DELIVERIES</p>", unsafe_allow_html=True)
@@ -2284,47 +2429,73 @@ with tab_hub:
                 if len(pitch_df) > 0:
                     pitch_df2 = pitch_df.copy()
                     pitch_df2['BallCat'] = pitch_df2.apply(ball_category, axis=1)
+
+                    # Master mapping profile including explicit 'Other' handler
                     cat_color_map = {
-                        'Dot':          ('#2ea043', 'circle',   'Dot/Wicket'),
-                        'Wicket':       ('#2ea043', 'x',        'Dot/Wicket'),
+                        'Wicket/Dot':          ('#2ea043', 'x',   'Dot/Wicket'),
+#                         'Wicket':       ('#2ea043', 'x',        'Dot/Wicket'),
                         'Single/Double':('#8b949e', 'circle',   'Single/Double'),
                         'Boundary':     ('#f85149', 'diamond',  'Boundary'),
                     }
+
                     shown = set()
+
+                    # 1. Plot the standard defined categories
                     for cat, (color, symbol, leg) in cat_color_map.items():
                         sub = pitch_df2[pitch_df2['BallCat'] == cat]
                         if len(sub) == 0: continue
                         fig_ex.add_trace(go.Scatter(
                             x=sub['PitchY'], y=sub['PitchX'], mode='markers',
-                            marker=dict(size=5, color=color, symbol=symbol,
-                                        opacity=0.75, line=dict(width=0.3, color='rgba(0,0,0,0.4)')),
+                            marker=dict(size=6, color=color, symbol=symbol,
+                                        opacity=0.80, line=dict(width=0.3, color='rgba(0,0,0,0.4)')),
                             name=leg if leg not in shown else None,
                             showlegend=(leg not in shown)
                         ))
                         shown.add(leg)
 
+                    # 2. NEW SAFETY VALVE: Capture any unmapped runs (e.g. 3 runs, overthrows, unique extras)
+                    known_cats = list(cat_color_map.keys())
+                    unmapped_df = pitch_df2[~pitch_df2['BallCat'].isin(known_cats)]
+
+                    if len(unmapped_df) > 0:
+                        fig_ex.add_trace(go.Scatter(
+                            x=unmapped_df['PitchY'], y=unmapped_df['PitchX'], mode='markers',
+                            marker=dict(size=6, color='#58a6ff', symbol='x',
+                                        opacity=0.80, line=dict(width=0.3, color='rgba(0,0,0,0.4)')),
+                            name='Other Actions (3s/Extras)',
+                            showlegend=True
+                        ))
+
+                # Build Pitch Superstructure
                 for y_val, label in lengths:
-                    fig_ex.add_hline(y=y_val, line_dash="dash", line_color="#21262d", line_width=1)
-                    fig_ex.add_annotation(x=-0.82, y=y_val, text=label, showarrow=False,
-                                          font=dict(color="#8b949e",size=8), xanchor="right")
-                fig_ex.add_vline(x=-0.114, line_color="#30363d", line_width=1)
-                fig_ex.add_vline(x= 0.114, line_color="#30363d", line_width=1)
+                    fig_ex.add_hline(y=y_val, line_dash="dash", line_color="#222c3c", line_width=1)
+                    fig_ex.add_annotation(x=-1.88, y=y_val, text=label, showarrow=False,
+                                           font=dict(color="#8b949e", size=8), xanchor="right", yanchor="middle")
+
+                fig_ex.add_vline(x=-stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+                fig_ex.add_vline(x= stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+                fig_ex.add_vline(x=-wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+                fig_ex.add_vline(x= wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+                fig_ex.add_vrect(x0=-1.9, x1=-wide_w, fillcolor="rgba(248,81,73,0.02)", line_width=0)
+                fig_ex.add_vrect(x0= wide_w, x1=1.9,  fillcolor="rgba(248,81,73,0.02)", line_width=0)
+
                 fig_ex.update_layout(
-                    xaxis=dict(range=[-1.0,1.0], showticklabels=False, showgrid=False, zeroline=False),
-                    yaxis=dict(range=[0,16], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#0d1117',
-                    legend=dict(orientation='h', y=-0.08, x=0.5, xanchor='center', font=dict(size=8)),
-                    margin=dict(t=10,b=10,l=5,r=5), height=360
+                    xaxis=dict(range=[-1.9, 1.9], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#11161d',
+                    legend=dict(orientation='h', y=-0.08, x=0.5, xanchor='center', font=dict(size=8, color="#8b949e")),
+                    margin=dict(t=10, b=10, l=100, r=5), height=380
                 )
                 st.plotly_chart(fig_ex, use_container_width=True)
-
+            
             # Dense zone label
             if len(pitch_df) > 5:
                 target_length_val = pitch_df['PitchX'].mean()
                 tgt_label = "Yorker" if target_length_val < 2 else \
                             "Full"   if target_length_val < 5 else \
                             "Good Length" if target_length_val < 8 else \
-                            "Back of Length" if target_length_val < 11 else "Short"
+                            "Back of Length" if target_length_val < 11 else \
+                            "Short" if target_length_val < 14 else "Bouncer"
                 st.markdown(
                     f'<p style="font-size:11px;color:#8b949e;margin-top:4px;">'
                     f'💡 Hover on coordinates to see ball details. '
@@ -2332,6 +2503,7 @@ with tab_hub:
                     unsafe_allow_html=True
                 )
 
+        
         # ── Row 2: Length Stacked Bar + Phase Performance Profile ──────
         r2a, r2b = st.columns(2)
 
