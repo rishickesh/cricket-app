@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit.components.v1 as components
 
 # ==========================================
 # 1. PAGE CONFIGURATION & THEME SETUP
@@ -126,7 +127,7 @@ def build_scoring_radar(dataframe, player_name):
     player_df = dataframe[(dataframe['Batter'] == player_name) & (dataframe['Is_Legal'] == True)]
     radar_data = player_df.groupby('Bowler Type').agg(total_runs=('Runs', 'sum'), balls_faced=('Runs', 'count')).reset_index()
     radar_data['SR'] = (radar_data['total_runs'] / np.maximum(radar_data['balls_faced'], 1)) * 100
-    categories = ['RF', 'RFM', 'LF', 'ROB', 'RLB', 'LOB']
+    categories = ['ROB', 'RFM', 'RF', 'RLB', 'RM', 'LLB', 'LOB', 'LFM', 'LF', 'LM']
     radar_data = radar_data.set_index('Bowler Type').reindex(categories).fillna(0).reset_index()
     
     fig = go.Figure()
@@ -142,32 +143,76 @@ def build_scoring_radar(dataframe, player_name):
     return fig
 
 def build_dismissal_landing_spots(dataframe, player_name):
-    dismissal_df = dataframe[(dataframe['Batter'] == player_name) & (dataframe['Is_Bowler_Wicket'] == True)].copy()
-    fig = go.Figure()
-    dismissal_df = dismissal_df.dropna(subset=['PitchX', 'PitchY'])
-    dismissal_df = dismissal_df[(dismissal_df['PitchX'] != 0) & (dismissal_df['PitchY'] != 0)]
-    
-    fig.add_trace(go.Scatter(x=dismissal_df['PitchY'], y=dismissal_df['PitchX'], mode='markers', marker=dict(symbol='x', size=12, color='#FF4B4B')))
-    
-    lengths = [(1.5, "Yorker"), (4.0, "Full"), (7.0, "Good"), (10.0, "Back Of Length"), (13.0, "Short"), (16.0, "Bouncer")]
-    for y_val, label in lengths:
-        fig.add_hline(y=y_val, line_dash="dash", line_color="#222c3c")
-        fig.add_annotation(x=-0.7, y=y_val, text=label, showarrow=False, font=dict(color="#8b949e", size=10), xanchor="right")
+    dismissal_df = dataframe[
+        (dataframe['Batter'] == player_name) &
+        (dataframe['Is_Bowler_Wicket'] == True)
+    ].copy()
 
-    stump_threshold = 0.114
-    fig.add_vline(x=-stump_threshold, line_dash="solid", line_color="#30363d")
-    fig.add_vline(x=stump_threshold, line_dash="solid", line_color="#30363d")
-    
-    batting_hand = dismissal_df['Batting Hand'].iloc[0] if len(dismissal_df) > 0 else 'RHB'
-    left_label, right_label = ("LEG", "OFF") if batting_hand == 'LHB' else ("OFF", "LEG")
-    fig.add_annotation(x=-0.4, y=0.5, text=left_label, showarrow=False, font=dict(color="#8b949e", size=11, weight="bold"))
-    fig.add_annotation(x=0, y=0.5, text="MIDDLE", showarrow=False, font=dict(color="#8b949e", size=11, weight="bold"))
-    fig.add_annotation(x=0.4, y=0.5, text=right_label, showarrow=False, font=dict(color="#8b949e", size=11, weight="bold"))
-    
-    fig.update_layout(xaxis=dict(range=[-1.0, 1.0], showticklabels=False, showgrid=False, zeroline=False),
-                      yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
-                      paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#11161d', margin=dict(t=40, b=30, l=80, r=40), height=380, showlegend=False)
-    return fig
+    dismissal_df = dismissal_df.dropna(subset=['PitchX', 'PitchY'])
+    dismissal_df = dismissal_df[
+        (dismissal_df['PitchX'].notnull()) &
+        (dismissal_df['PitchY'].notnull())
+    ]
+
+    batting_hand = (
+        dismissal_df['Batting Hand'].iloc[0]
+        if len(dismissal_df) > 0 else 'RHB'
+    )
+    off_side = "LEG" if batting_hand == 'LHB' else "OFF"
+    leg_side = "OFF" if batting_hand == 'LHB' else "LEG"
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dismissal_df['PitchY'],
+        y=dismissal_df['PitchX'],
+        mode='markers',
+        marker=dict(symbol='x', size=12, color='#FF4B4B'),
+        hovertemplate="Line: %{x:.3f}m<br>Length: %{y:.1f}m<extra></extra>"
+    ))
+
+    # ── Length lines only — labels handled outside Plotly ─────────────
+    lengths = [
+        (1.5,  "Yorker"),
+        (4.0,  "Full"),
+        (7.0,  "Good"),
+        (10.0, "Back Of Length"),
+        (13.0, "Short"),
+        (16.0, "Bouncer"),
+    ]
+    for y_val, label in lengths:
+        fig.add_hline(y=y_val, line_dash="dash", line_color="#222c3c", line_width=1)
+        fig.add_annotation(
+            x=-1.88, y=y_val, text=label,
+            showarrow=False,
+            font=dict(color="#8b949e", size=10),
+            xanchor="right", yanchor="middle"
+        )
+
+    # ── Stump lines ────────────────────────────────────────────────────
+    stump_w = 0.114
+    fig.add_vline(x=-stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+    fig.add_vline(x= stump_w, line_dash="solid", line_color="#506070", line_width=1.5)
+
+    # ── Wide lines ─────────────────────────────────────────────────────
+    wide_w = 0.89
+    fig.add_vline(x=-wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+    fig.add_vline(x= wide_w, line_dash="dot", line_color="#2c3a4a", line_width=1.5)
+
+    # ── Subtle wide zone shading ───────────────────────────────────────
+    fig.add_vrect(x0=-1.9, x1=-wide_w, fillcolor="rgba(248,81,73,0.04)", line_width=0)
+    fig.add_vrect(x0= wide_w, x1=1.9,  fillcolor="rgba(248,81,73,0.04)", line_width=0)
+
+    fig.update_layout(
+        xaxis=dict(range=[-1.9, 1.9], showticklabels=False, showgrid=False, zeroline=False),
+        yaxis=dict(range=[0, 18], autorange="reversed", showticklabels=False, showgrid=False, zeroline=False),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#11161d',
+        margin=dict(t=10, b=10, l=140, r=30),
+        height=400,
+        showlegend=False,
+    )
+    return fig, off_side, leg_side
 
 def build_polar_wagon_wheel(dataframe, player_name):
     player_df = dataframe[(dataframe['Batter'] == player_name) & (dataframe['Is_Legal'] == True)].copy()
@@ -218,7 +263,7 @@ def build_wickets_by_phase(dataframe, bowler_name):
 def build_bowler_topography(dataframe, bowler_name, plot_mode):
     bowler_df = dataframe[dataframe['Bowler'] == bowler_name].copy()
     bowler_df = bowler_df.dropna(subset=['PitchX', 'PitchY'])
-    bowler_df = bowler_df[(bowler_df['PitchX'] != 0) & (bowler_df['PitchY'] != 0)]
+    bowler_df = bowler_df[(bowler_df['PitchX'].notnull()) & (bowler_df['PitchY'].notnull())]
     
     fig = go.Figure()
     if plot_mode == "Heatmap" and len(bowler_df) > 0:
@@ -349,13 +394,49 @@ with tab_batting:
         st.plotly_chart(build_scoring_radar(df, selected_player), use_container_width=True)
     with col_bat2:
         st.markdown('<div class="sub-card"><h3 style="text-align: center; color: #ffffff;">DISMISSAL LANDING SPOTS</h3></div>', unsafe_allow_html=True)
-        st.plotly_chart(build_dismissal_landing_spots(df, selected_player), use_container_width=True)
+        fig_dls, off_side, leg_side = build_dismissal_landing_spots(df, selected_player)
+
+        # HTML header row — widths mirror the chart's actual zone proportions
+        # x range is -1.9 to 1.9 (total 3.8). Zones:
+        #   wide off  : -1.9 to -0.89  → 1.01 / 3.8 = 26.6%
+        #   off       : -0.89 to -0.114 → 0.776 / 3.8 = 20.4%
+        #   middle    : -0.114 to 0.114 → 0.228 / 3.8 = 6%
+        #   leg       : 0.114 to 0.89  → 0.776 / 3.8 = 20.4%
+        #   wide leg  : 0.89 to 1.9   → 1.01 / 3.8 = 26.6%
+        # (left margin ~140px eats into wide-off zone visually, accounted for below)
+
+        st.markdown(f"""
+            <div style="display:flex; width:100%; margin-bottom:2px; padding-left:140px; padding-right:30px; box-sizing:border-box;">
+                <div style="flex:1.01; text-align:center; font-size:10px; font-weight:700;
+                            color:#4a5568; letter-spacing:.05em;">
+                    ◀ WIDE {off_side}
+                </div>
+                <div style="flex:0.776; text-align:center; font-size:10px; font-weight:700;
+                            color:#8b949e; letter-spacing:.05em;">
+                    {off_side}
+                </div>
+                <div style="flex:0.228; text-align:center; font-size:10px; font-weight:700;
+                            color:#8b949e; letter-spacing:.05em;">
+                    MID
+                </div>
+                <div style="flex:0.776; text-align:center; font-size:10px; font-weight:700;
+                            color:#8b949e; letter-spacing:.05em;">
+                    {leg_side}
+                </div>
+                <div style="flex:1.01; text-align:center; font-size:10px; font-weight:700;
+                            color:#4a5568; letter-spacing:.05em;">
+                    WIDE {leg_side} ▶
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.plotly_chart(fig_dls, use_container_width=True)
     with col_bat3:
         st.markdown('<div class="sub-card"><h3 style="text-align: center; color: #ffffff;">POLAR WAGON WHEEL</h3></div>', unsafe_allow_html=True)
         st.plotly_chart(build_polar_wagon_wheel(df, selected_player), use_container_width=True)
 
 with tab_bowling:
-    st.sidebar.markdown("### 🍒 Bowler Selector")
+    st.sidebar.markdown("### 🎳 Bowler Selector")
     bowler_metrics = df.groupby('Bowler').agg(wkts=('Is_Bowler_Wicket', 'sum'), runs=('Runs', 'sum'), b_extras=('Bowler Extra Runs', 'sum'), balls=('Is_Legal', 'count')).reset_index()
     bowler_metrics['Total_Runs_Conceded'] = bowler_metrics['runs'] + bowler_metrics['b_extras']
     bowler_metrics['Economy'] = (bowler_metrics['Total_Runs_Conceded'] / np.maximum(bowler_metrics['balls'], 1)) * 6
@@ -396,7 +477,7 @@ with tab_matchup:
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📊 Matchup Configuration")
+    st.sidebar.markdown("### ⚔️ Matchup Configuration")
 
     all_batters = sorted(df['Batter'].dropna().unique())
     all_bowlers = sorted(df['Bowler'].dropna().unique())
@@ -416,7 +497,6 @@ with tab_matchup:
     if not selected_matrix_batters or not selected_matrix_bowlers:
         st.warning("⚠️ Please select at least one Batter and one Bowler in the sidebar.")
     else:
-        # Aggregate matchup data
         matchup_raw = df[
             df['Batter'].isin(selected_matrix_batters) &
             df['Bowler'].isin(selected_matrix_bowlers)
@@ -430,167 +510,321 @@ with tab_matchup:
         matchup_agg['SR'] = (matchup_agg['runs'] / np.maximum(matchup_agg['balls'], 1)) * 100
 
         def cell_color(row):
-            if row['balls'] < 10:
-                return '#1d242e'
-            elif row['SR'] >= 145:
-                return '#6e1a24'
-            elif row['SR'] >= 115:
-                return '#4c1d6e'
-            else:
-                return '#1d446e'
+            if row['balls'] < 10:   return '#1d242e'
+            elif row['SR'] >= 145:  return '#6e1a24'
+            elif row['SR'] >= 115:  return '#4c1d6e'
+            else:                   return '#1d446e'
 
         matchup_agg['Cell_Color'] = matchup_agg.apply(cell_color, axis=1)
 
-        # Build lookup dictionary
         cell_lookup = {
             (r['Bowler'], r['Batter']): r
             for _, r in matchup_agg.iterrows()
         }
 
-        # Session-state defaults
-        if ('matrix_focus_batter' not in st.session_state or st.session_state.matrix_focus_batter not in selected_matrix_batters):
+        # ── Session state ──────────────────────────────────────────────
+        if ('matrix_focus_batter' not in st.session_state or
+                st.session_state.matrix_focus_batter not in selected_matrix_batters):
             st.session_state.matrix_focus_batter = selected_matrix_batters[0]
-        if ('matrix_focus_bowler' not in st.session_state or st.session_state.matrix_focus_bowler not in selected_matrix_bowlers):
+        if ('matrix_focus_bowler' not in st.session_state or
+                st.session_state.matrix_focus_bowler not in selected_matrix_bowlers):
             st.session_state.matrix_focus_bowler = selected_matrix_bowlers[0]
 
-        # Layout allocation
+        # ── Listen for click messages from the HTML component ──────────
+        # We store the last click in session_state via query_params trick.
+        # Instead we use a text_input hidden approach: render a
+        # selectbox that the HTML posts into via st.query_params.
+        # Simplest: use st.session_state key written by a hidden
+        # st.text_input that the component targets.
+
+        # ── Build the full HTML matrix grid ───────────────────────────
+        nb = len(selected_matrix_batters)
+        nw = len(selected_matrix_bowlers)
+
+        # Column widths: first col wider for bowler name
+        col_w   = 90   # px per batter column
+        row_h   = 50   # px per cell
+        label_w = 160  # px for bowler name column
+        header_h= 80   # px for rotated batter names
+
+        total_w = label_w + nb * col_w + 20
+        total_h = header_h + nw * row_h + 20
+
+        # Build cell data as JSON-safe structure for JS
+        cells_js = []
+        for bi, bowler in enumerate(selected_matrix_bowlers):
+            for ba, batter in enumerate(selected_matrix_batters):
+                stats = cell_lookup.get((bowler, batter))
+                if stats is not None:
+                    bg   = stats['Cell_Color']
+                    txt  = f"{int(stats['runs'])}({int(stats['balls'])})<br>{int(stats['outs'])}W"
+                else:
+                    bg   = '#11161d'
+                    txt  = '—'
+                active = (
+                    batter == st.session_state.matrix_focus_batter and
+                    bowler == st.session_state.matrix_focus_bowler
+                )
+                cells_js.append({
+                    'bi': bi, 'ba': ba,
+                    'bowler': bowler, 'batter': batter,
+                    'bg': bg, 'txt': txt, 'active': active
+                })
+
+        import json
+        cells_json   = json.dumps(cells_js)
+        batters_json = json.dumps(selected_matrix_batters)
+        bowlers_json = json.dumps(selected_matrix_bowlers)
+
+        focus_b  = st.session_state.matrix_focus_batter
+        focus_bw = st.session_state.matrix_focus_bowler
+
+        html_matrix = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+
+  #legend {{
+    display: flex; flex-wrap: wrap; gap: 10px;
+    background: #11161d; border: 1px solid #30363d;
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 10px;
+    justify-content: center;
+  }}
+  .leg-item {{ display: flex; align-items: center; gap: 5px; font-size: 11px; color: #fff; }}
+  .leg-swatch {{ width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; }}
+
+  #grid-wrap {{ overflow-x: auto; }}
+  table {{ border-collapse: separate; border-spacing: 3px; }}
+
+  .batter-header {{
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 10px; font-weight: 700;
+    color: #8b949e;
+    height: {header_h}px;
+    text-align: center;
+    vertical-align: bottom;
+    padding-bottom: 4px;
+    width: {col_w}px;
+    white-space: nowrap;
+  }}
+  .batter-header.active {{ color: #ffa500; }}
+
+  .bowler-label {{
+    font-size: 11px; font-weight: 700;
+    color: #c9d1d9;
+    text-align: right;
+    padding-right: 8px;
+    width: {label_w}px;
+    white-space: nowrap;
+    vertical-align: middle;
+    height: {row_h}px;
+  }}
+  .bowler-label.active {{ color: #ffa500; }}
+
+  .cell {{
+    width: {col_w}px;
+    height: {row_h}px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 10px;
+    font-weight: 600;
+    color: #ffffff;
+    cursor: pointer;
+    line-height: 1.35;
+    transition: border-color .15s, opacity .15s;
+  }}
+  .cell:hover {{ border-color: #ffa500 !important; opacity: 0.85; }}
+  .cell.active {{ border: 2px solid #ffa500 !important; }}
+
+  .corner {{ width: {label_w}px; }}
+</style>
+</head>
+<body>
+
+<div id="legend">
+  <div class="leg-item"><div class="leg-swatch" style="background:#6e1a24;"></div>≥10b &amp; SR ≥145 (Batter dominates)</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#4c1d6e;"></div>≥10b &amp; SR 115-144 (Balanced)</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#1d446e;"></div>≥10b &amp; SR &lt;115 (Bowler dominates)</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#1d242e;border:1px solid #444;"></div>&lt;10b (Low sample)</div>
+</div>
+
+<div id="grid-wrap">
+<table id="matrix-table">
+  <thead>
+    <tr>
+      <th class="corner"></th>
+      <!-- batter headers injected by JS -->
+    </tr>
+  </thead>
+  <tbody id="matrix-body">
+    <!-- rows injected by JS -->
+  </tbody>
+</table>
+</div>
+
+<script>
+const cells   = {cells_json};
+const batters = {batters_json};
+const bowlers = {bowlers_json};
+const focusBatter = {json.dumps(focus_b)};
+const focusBowler = {json.dumps(focus_bw)};
+
+// ── Build header row ──────────────────────────────────────────────
+const thead = document.querySelector('#matrix-table thead tr');
+batters.forEach(b => {{
+  const th = document.createElement('th');
+  th.className = 'batter-header' + (b === focusBatter ? ' active' : '');
+  th.textContent = b;
+  thead.appendChild(th);
+}});
+
+// ── Build body rows ───────────────────────────────────────────────
+const tbody = document.getElementById('matrix-body');
+
+bowlers.forEach((bowler, bi) => {{
+  const tr = document.createElement('tr');
+
+  // Bowler name cell
+  const tdLabel = document.createElement('td');
+  tdLabel.className = 'bowler-label' + (bowler === focusBowler ? ' active' : '');
+  tdLabel.textContent = bowler;
+  tr.appendChild(tdLabel);
+
+  batters.forEach((batter, ba) => {{
+    const match = cells.find(c => c.bi === bi && c.ba === ba);
+    const td = document.createElement('td');
+    td.className = 'cell' + (match && match.active ? ' active' : '');
+    td.style.backgroundColor = match ? match.bg : '#11161d';
+    td.innerHTML = match ? match.txt : '—';
+    td.addEventListener('click', () => {{
+      // Post message to Streamlit parent
+      window.parent.postMessage({{
+        type: 'matchup_click',
+        batter: batter,
+        bowler: bowler
+      }}, '*');
+    }});
+    tr.appendChild(td);
+  }});
+
+  tbody.appendChild(tr);
+}});
+</script>
+</body>
+</html>
+"""
+
         matrix_left, details_right = st.columns([2, 1])
 
         with matrix_left:
+            # Render the HTML grid — height auto-sizes to content
+            click_result = components.html(
+                html_matrix,
+                height=total_h + 80,
+                scrolling=False
+            )
+
+            # ── Receive click via URL fragment trick ───────────────────
+            # Since postMessage can't directly write to session_state,
+            # we use a hidden text_input pair that JS updates via
+            # the Streamlit component communication channel.
+            # The cleanest approach with components.html is to use
+            # st.query_params. We inject JS that updates query params.
             st.markdown("""
-                <div style="background-color:#11161d;border:1px solid #30363d;border-radius:6px;
-                            padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;
-                            gap:12px;justify-content:center;">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div style="width:14px;height:14px;background:#6e1a24;border-radius:3px;"></div>
-                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR ≥145 (Batter dominates)</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div style="width:14px;height:14px;background:#4c1d6e;border-radius:3px;"></div>
-                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR 115-144 (Balanced)</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div style="width:14px;height:14px;background:#1d446e;border-radius:3px;"></div>
-                        <span style="font-size:12px;color:#ffffff;">≥10b &amp; SR &lt;115 (Bowler dominates)</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div style="width:14px;height:14px;background:#1d242e;border-radius:3px;"></div>
-                        <span style="font-size:12px;color:#8b949e;">&lt;10b (Low sample)</span>
-                    </div>
-                </div>
+                <script>
+                window.addEventListener('message', function(e) {
+                    if (e.data && e.data.type === 'matchup_click') {
+                        // Update URL params so Streamlit can read them
+                        const url = new URL(window.parent.location);
+                        url.searchParams.set('mx_batter', e.data.batter);
+                        url.searchParams.set('mx_bowler', e.data.bowler);
+                        window.parent.history.replaceState({}, '', url);
+                        // Trigger rerun by clicking a hidden button
+                        const btn = window.parent.document.querySelector('[data-testid="baseButton-secondary"][aria-label="mx_trigger"]');
+                        if (btn) btn.click();
+                    }
+                });
+                </script>
             """, unsafe_allow_html=True)
 
-            # Header row (batter names)
-            header_cols = st.columns([1.6] + [1] * len(selected_matrix_batters))
-            header_cols[0].markdown(
-                "<p style='color:#8b949e;font-size:11px;margin:0;text-align:right;"
-                "padding-right:6px;'>Bowler \\ Batter</p>",
-                unsafe_allow_html=True
-            )
-            for col_idx, batter in enumerate(selected_matrix_batters):
-                is_selected = (batter == st.session_state.matrix_focus_batter)
-                color = '#ffa500' if is_selected else '#8b949e'
-                header_cols[col_idx + 1].markdown(
-                    f"<p style='color:{color};font-size:10px;font-weight:bold;"
-                    f"text-align:center;margin:0;writing-mode:vertical-rl;"
-                    f"transform:rotate(180deg);height:70px;'>{batter}</p>",
-                    unsafe_allow_html=True
+            # Read query params and update session state
+            qp = st.query_params
+            if 'mx_batter' in qp and 'mx_bowler' in qp:
+                qb = qp['mx_batter']
+                qw = qp['mx_bowler']
+                if (qb in selected_matrix_batters and
+                        qw in selected_matrix_bowlers and
+                        (qb != st.session_state.matrix_focus_batter or
+                         qw != st.session_state.matrix_focus_bowler)):
+                    st.session_state.matrix_focus_batter = qb
+                    st.session_state.matrix_focus_bowler = qw
+                    st.query_params.clear()
+                    st.rerun()
+
+            # Fallback clickable selectors below the grid
+            st.markdown("<p style='color:#8b949e;font-size:11px;margin-top:6px;'>Or select manually:</p>", unsafe_allow_html=True)
+            sel_col1, sel_col2 = st.columns(2)
+            with sel_col1:
+                new_batter = st.selectbox(
+                    "Batter", selected_matrix_batters,
+                    index=selected_matrix_batters.index(st.session_state.matrix_focus_batter),
+                    key="mx_bat_sel"
                 )
-
-            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
-
-            # Render data cells
-            for bowler in selected_matrix_bowlers:
-                is_bowler_selected = (bowler == st.session_state.matrix_focus_bowler)
-                bowler_color = '#ffa500' if is_bowler_selected else '#c9d1d9'
-
-                row_cols = st.columns([1.6] + [1] * len(selected_matrix_batters))
-
-                row_cols[0].markdown(
-                    f"<p style='color:{bowler_color};font-size:11px;font-weight:bold;"
-                    f"text-align:right;padding-right:6px;margin:0;line-height:46px;'>{bowler}</p>",
-                    unsafe_allow_html=True
+            with sel_col2:
+                new_bowler = st.selectbox(
+                    "Bowler", selected_matrix_bowlers,
+                    index=selected_matrix_bowlers.index(st.session_state.matrix_focus_bowler),
+                    key="mx_bowl_sel"
                 )
+            if (new_batter != st.session_state.matrix_focus_batter or
+                    new_bowler != st.session_state.matrix_focus_bowler):
+                st.session_state.matrix_focus_batter = new_batter
+                st.session_state.matrix_focus_bowler = new_bowler
+                st.rerun()
 
-                for col_idx, batter in enumerate(selected_matrix_batters):
-                    key = (bowler, batter)
-                    stats = cell_lookup.get(key)
-                    is_active = (batter == st.session_state.matrix_focus_batter and bowler == st.session_state.matrix_focus_bowler)
-
-                    if stats is not None:
-                        bg = stats['Cell_Color']
-                        text = f"{int(stats['runs'])}({int(stats['balls'])})\n{int(stats['outs'])}W"
-                    else:
-                        bg = '#11161d'
-                        text = "—"
-
-                    border = '2px solid #ffa500' if is_active else '1px solid #30363d'
-
-                    with row_cols[col_idx + 1]:
-                        st.markdown(
-                            f"""
-                            <style>
-                            div[data-testid="stButton"] > button[key="cell_{bowler}_{batter}"] {{
-                                background-color: {bg};
-                                border: {border};
-                                border-radius: 4px;
-                                color: #ffffff;
-                                font-size: 10px;
-                                font-weight: 600;
-                                white-space: pre-line;
-                                line-height: 1.3;
-                                width: 100%;
-                                height: 46px;
-                                padding: 2px 4px;
-                                cursor: pointer;
-                            }}
-                            div[data-testid="stButton"] > button[key="cell_{bowler}_{batter}"]:hover {{
-                                border-color: #ffa500 !important;
-                                background-color: {bg} !important;
-                            }}
-                            </style>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        if st.button(text, key=f"cell_{bowler}_{batter}", use_container_width=True):
-                            st.session_state.matrix_focus_batter = batter
-                            st.session_state.matrix_focus_bowler = bowler
-                            st.rerun()
-
-        # Render complete detail panel metrics configuration
+        # ── Detail panel ──────────────────────────────────────────────
         focus_batter = st.session_state.matrix_focus_batter
         focus_bowler = st.session_state.matrix_focus_bowler
 
         with details_right:
-            tgt_df = matchup_raw[(matchup_raw['Batter'] == focus_batter) & (matchup_raw['Bowler'] == focus_bowler)]
+            tgt_df = matchup_raw[
+                (matchup_raw['Batter'] == focus_batter) &
+                (matchup_raw['Bowler'] == focus_bowler)
+            ]
 
-            t_runs = int(tgt_df['Runs'].sum())
+            t_runs  = int(tgt_df['Runs'].sum())
             t_balls = int(tgt_df[tgt_df['Is_Legal'] == True].shape[0])
-            t_outs = int(tgt_df['Is_Bowler_Wicket'].sum())
-            t_sr = (t_runs / max(t_balls, 1)) * 100
-            t_dots = int(tgt_df[(tgt_df['Runs'] == 0) & (tgt_df['Is_Bowler_Wicket'] == False)].shape[0])
+            t_outs  = int(tgt_df['Is_Bowler_Wicket'].sum())
+            t_sr    = (t_runs / max(t_balls, 1)) * 100
+            t_dots  = int(tgt_df[
+                (tgt_df['Runs'] == 0) & (tgt_df['Is_Bowler_Wicket'] == False)
+            ].shape[0])
             dot_pct = (t_dots / max(t_balls, 1)) * 100
 
-            # Wrap the card contents nicely inside a clean, closed container
             with st.container():
                 st.markdown(
                     f"""
-                    <div style='background-color:#161b22;padding:18px;border-radius:8px;border:1px solid #30363d;margin-bottom:15px;'>
+                    <div style='background-color:#161b22;padding:18px;border-radius:8px;
+                                border:1px solid #30363d;margin-bottom:15px;'>
                         <h3 style='margin:0 0 2px 0;font-size:16px;'>⚔️ {focus_batter}</h3>
-                        <p style='margin:0;color:#8b949e;font-size:12px;'>vs&nbsp;<span style='color:#c9d1d9;font-weight:bold;'>{focus_bowler}</span></p>
+                        <p style='margin:0;color:#8b949e;font-size:12px;'>vs&nbsp;
+                            <span style='color:#c9d1d9;font-weight:bold;'>{focus_bowler}</span>
+                        </p>
                     </div>
-                    """,
-                    unsafe_allow_html=True
+                    """, unsafe_allow_html=True
                 )
-                
-                # Check sample size natively using Streamlit's warning component
                 if t_balls < 10:
                     st.warning("⚠️ Small sample — treat with caution.")
-                
-                st.markdown("---") # Clean markdown horizontal rule replacing the raw HTML <hr>
+                st.markdown("---")
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("Runs", t_runs)
+            m1.metric("Runs",  t_runs)
             m2.metric("Balls", t_balls)
             m3.metric("Outs",  t_outs)
 
@@ -615,7 +849,6 @@ with tab_matchup:
                         <p style='margin:0;font-size:10px;color:#8b949e;'>({t_dots} balls)</p>
                     </div>
                 </div>
-
                 <div style='display:flex;gap:8px;margin-bottom:14px;'>
                     <div style='flex:1;text-align:center;background:#11161d;padding:10px;
                                 border-radius:6px;border:1px solid #21262d;'>
@@ -632,9 +865,7 @@ with tab_matchup:
                         </h2>
                     </div>
                 </div>
-
-                <div style='background:#11161d;border:1px solid #30363d;border-radius:6px;
-                            padding:10px;'>
+                <div style='background:#11161d;border:1px solid #30363d;border-radius:6px;padding:10px;'>
                     <p style='margin:0 0 8px 0;font-size:12px;color:#ffffff;font-weight:bold;'>
                         💡 Interpretations
                     </p>
@@ -647,11 +878,8 @@ with tab_matchup:
                         Positive = bowler being expensive.
                     </p>
                 </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+                """, unsafe_allow_html=True
             )
-
 
 # --- TAB 4: TACTICAL FIELD PLANNER WORKSPACE ---
 with tab_fielding:
@@ -823,8 +1051,9 @@ with tab_venue:
         with r1_right:
             st.markdown('<div class="sub-card"><h4 style="margin:0;">Squad Selection Insights (Pace vs. Spin Effectiveness)</h4></div>', unsafe_allow_html=True)
             
-            pace_types = ['RF', 'RFM', 'LF']
-            spin_types = ['ROB', 'RLB', 'LOB']
+            
+            pace_types = ['RF', 'RFM', 'LF', 'RM', 'LFM', 'LM']
+            spin_types = ['ROB', 'RLB', 'LOB', 'LLB']
             
             pace_mask = v_df['Bowler Type'].isin(pace_types)
             spin_mask = v_df['Bowler Type'].isin(spin_types)
@@ -1177,27 +1406,112 @@ with tab_diagnostics:
             f'Capability Index vs {scope_label}</h4></div>',
             unsafe_allow_html=True
         )
-        radar_cats = ['Batting SR','Batting Avg','Boundary %',
-                      'Bowl Econ (Inv)','Bowl SR (Inv)','Dot Ball %']
-        t_vals = [sr_index, 105, 98, econ_index, 112, dot_index]
+
+        radar_cats = ['Batting SR', 'Batting Avg', 'Boundary %',
+                      'Bowl Econ (Inv)', 'Bowl SR (Inv)', 'Dot Ball %']
+
+        # ══════════════════════════════════════════════════════════════
+        # SINGLE SOURCE OF TRUTH — compute all 6 indices once.
+        # Index > 100  = team better than league on that metric
+        # Index < 100  = team worse than league
+        # Both charts read from this same dict.
+        # ══════════════════════════════════════════════════════════════
+
+        # 1. Batting SR index
+        t_bat_sr_val  = team_sr_phase[1]
+        lg_bat_sr_val = lg_sr_phase[1]
+        bat_sr_index  = (t_bat_sr_val / max(lg_bat_sr_val, 1)) * 100
+
+        # 2. Batting Avg index
+        t_bat_runs   = float(team_bat_df['Runs'].sum())
+        t_bat_dismi  = max(float(team_bat_df['Is_Bowler_Wicket'].sum()), 1)
+        lg_bat_runs  = float(league_bat_df['Runs'].sum())
+        lg_bat_dismi = max(float(league_bat_df['Is_Bowler_Wicket'].sum()), 1)
+        t_avg        = t_bat_runs  / t_bat_dismi
+        lg_avg       = lg_bat_runs / lg_bat_dismi
+        bat_avg_index = (t_avg / max(lg_avg, 1)) * 100
+
+        # 3. Boundary % index
+        t_legal    = team_bat_df[team_bat_df['Is_Legal'] == True]
+        lg_legal   = league_bat_df[league_bat_df['Is_Legal'] == True]
+        t_bnd_pct  = (t_legal[t_legal['Runs'] >= 4].shape[0]   / max(len(t_legal),  1)) * 100
+        lg_bnd_pct = (lg_legal[lg_legal['Runs'] >= 4].shape[0] / max(len(lg_legal), 1)) * 100
+        bnd_index  = (t_bnd_pct / max(lg_bnd_pct, 1)) * 100
+
+        # 4. Bowl Economy index (INVERTED — lower econ = better)
+        # (lg_econ / team_econ) * 100 → >100 means team is cheaper than league
+        t_bowl_legal_all  = team_bowl_df[team_bowl_df['Is_Legal'] == True]
+        lg_bowl_legal_all = league_bowl_df[league_bowl_df['Is_Legal'] == True]
+        t_bowl_runs_all   = float(team_bowl_df['Runs'].sum()) + float(
+            team_bowl_df['Bowler Extra Runs'].sum()
+            if 'Bowler Extra Runs' in team_bowl_df.columns else 0
+        )
+        lg_bowl_runs_all  = float(league_bowl_df['Runs'].sum()) + float(
+            league_bowl_df['Bowler Extra Runs'].sum()
+            if 'Bowler Extra Runs' in league_bowl_df.columns else 0
+        )
+        t_econ_all  = (t_bowl_runs_all  / max(len(t_bowl_legal_all),  1)) * 6
+        lg_econ_all = (lg_bowl_runs_all / max(len(lg_bowl_legal_all), 1)) * 6
+        bowl_econ_index = (lg_econ_all / max(t_econ_all, 0.01)) * 100
+
+        # 5. Bowl SR index (INVERTED — fewer balls per wicket = better)
+        t_bowl_wkts   = max(float(team_bowl_df['Is_Bowler_Wicket'].sum()),   1)
+        lg_bowl_wkts  = max(float(league_bowl_df['Is_Bowler_Wicket'].sum()), 1)
+        t_bowl_balls  = max(float(len(t_bowl_legal_all)),  1)
+        lg_bowl_balls = max(float(len(lg_bowl_legal_all)), 1)
+        t_bowl_sr     = t_bowl_balls  / t_bowl_wkts
+        lg_bowl_sr    = lg_bowl_balls / lg_bowl_wkts
+        bowl_sr_index = (lg_bowl_sr / max(t_bowl_sr, 0.01)) * 100
+
+        # 6. Dot Ball % index (higher dot % = better for bowling)
+        t_dot_pct  = (t_bowl_legal_all[t_bowl_legal_all['Runs'] == 0].shape[0]   / max(len(t_bowl_legal_all),  1)) * 100
+        lg_dot_pct = (lg_bowl_legal_all[lg_bowl_legal_all['Runs'] == 0].shape[0] / max(len(lg_bowl_legal_all), 1)) * 100
+        dot_index_real = (t_dot_pct / max(lg_dot_pct, 0.01)) * 100
+
+        # ── Ordered to match radar_cats exactly ───────────────────────
+        indices = {
+            'Batting SR':       bat_sr_index,
+            'Batting Avg':      bat_avg_index,
+            'Boundary %':       bnd_index,
+            'Bowl Econ (Inv)':  bowl_econ_index,
+            'Bowl SR (Inv)':    bowl_sr_index,
+            'Dot Ball %':       dot_index_real,
+        }
+        t_vals = [indices[c] for c in radar_cats]
+
+        # ── Dynamic axis range ────────────────────────────────────────
+        import math
+        all_vals  = t_vals + [100]
+        radar_max = math.ceil(max(all_vals) * 1.15 / 10) * 10
+        radar_min = max(math.floor(min(all_vals) * 0.85 / 10) * 10, 0)
 
         fig_radar = go.Figure()
         fig_radar.add_trace(go.Scatterpolar(
-            r=t_vals + [t_vals[0]], theta=radar_cats + [radar_cats[0]],
-            fill='toself', fillcolor='rgba(218,54,68,0.15)',
-            name=selected_team, line=dict(color='#da3644', width=2)
+            r=[100] * 7, theta=radar_cats + [radar_cats[0]],
+            name=f'{scope_label} (100)',
+            line=dict(color='#8b949e', width=1.5, dash='dash'),
+            fill=None,
         ))
         fig_radar.add_trace(go.Scatterpolar(
-            r=[100]*7, theta=radar_cats + [radar_cats[0]],
-            name=scope_label, line=dict(color='#8b949e', width=1.5, dash='dash')
+            r=t_vals + [t_vals[0]], theta=radar_cats + [radar_cats[0]],
+            fill='toself', fillcolor='rgba(218,54,68,0.15)',
+            name=selected_team, line=dict(color='#da3644', width=2),
+            marker=dict(size=5, color='#da3644'),
+            hovertemplate='%{theta}<br>Index: %{r:.1f}<extra></extra>'
         ))
         fig_radar.update_layout(
             polar=dict(
-                radialaxis=dict(visible=True, range=[50,140], gridcolor='#30363d'),
+                radialaxis=dict(
+                    visible=True, range=[radar_min, radar_max],
+                    gridcolor='#30363d',
+                    tickfont=dict(size=8, color='#8b949e'),
+                    tickmode='linear',
+                    dtick=max(round((radar_max - radar_min) / 4 / 10) * 10, 10),
+                ),
                 angularaxis=dict(gridcolor='#30363d')
             ),
             template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)',
-            height=340, margin=dict(t=30,b=20,l=40,r=40),
+            height=340, margin=dict(t=30, b=20, l=40, r=40),
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center")
         )
         st.plotly_chart(fig_radar, use_container_width=True)
@@ -1208,34 +1522,40 @@ with tab_diagnostics:
             f'Performance Variance vs {scope_label}</h4></div>',
             unsafe_allow_html=True
         )
-        var_cats = ['Dot Ball %','Bowl SR','Bowl Economy',
-                    'Boundary %','Batting Avg','Batting SR']
-        var_vals = [
-            int(dot_index - 100),
-            int((team_wkts_taken_phase[1] / max(team_wkts_lost_phase[1],1) - 1) * 20),
-            int(econ_index - 100),
-            int(sr_index - 100) // 3,
-            5,
-            int(sr_index - 100)
-        ]
+
+        # ── Variance bars: index - 100 so 0 = league average ──────────
+        # Positive = surplus over league, Negative = deficit
+        # Uses the EXACT same indices dict computed above
+        var_cats = ['Batting SR', 'Batting Avg', 'Boundary %',
+                    'Bowl Econ (Inv)', 'Bowl SR (Inv)', 'Dot Ball %']
+        var_vals = [round(indices[c] - 100, 1) for c in var_cats]
         bar_colors = ['#2ea043' if v >= 0 else '#da3644' for v in var_vals]
 
         fig_var = go.Figure(go.Bar(
             x=var_vals, y=var_cats, orientation='h',
             marker_color=bar_colors,
-            text=[f"{v:+d}" for v in var_vals],
+            text=[f"{v:+.1f}" for v in var_vals],
             textposition='outside',
             textfont=dict(color='#8b949e', size=11)
         ))
-        fig_var.add_vline(x=0, line_color='#30363d', line_width=1.5)
+        fig_var.add_vline(x=0, line_color='#8b949e', line_width=1.5, line_dash='dot')
         fig_var.update_layout(
             template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(title=f"Surplus / Deficit vs {scope_label}", gridcolor='#21262d', zeroline=False),
+            xaxis=dict(
+                title="Index surplus / deficit vs league (0 = league avg)",
+                gridcolor='#21262d', zeroline=False,
+                # Symmetric axis so bars read cleanly
+                range=[
+                    min(var_vals + [-20]) * 1.3,
+                    max(var_vals + [20])  * 1.3,
+                ]
+            ),
             yaxis=dict(showgrid=False),
-            height=340, margin=dict(t=20,b=20,l=10,r=60)
+            height=340, margin=dict(t=20, b=20, l=10, r=70)
         )
         st.plotly_chart(fig_var, use_container_width=True)
-
+        
+        
     r2_left, r2_right = st.columns([1, 1])
 
     with r2_left:
@@ -1398,8 +1718,8 @@ with tab_hub:
     # ══════════════════════════════════════════════════════════════════
     # DATA SLICING HELPERS
     # ══════════════════════════════════════════════════════════════════
-    PACE_TYPES = ['RF', 'RFM', 'LF', 'RMF', 'LMF', 'RM', 'LM']
-    SPIN_TYPES = ['ROB', 'RLB', 'LOB', 'LSB', 'OB', 'LB', 'SLA']
+    PACE_TYPES = ['RF', 'RFM', 'LF', 'LFM', 'LM', 'RM']
+    SPIN_TYPES = ['ROB', 'RLB', 'LOB', 'LLB']
 
     def slice_bat(name, season=None, phase=None, matchup=None):
         d = df[df['Batter'] == name].copy()
@@ -1696,11 +2016,11 @@ with tab_hub:
             )
 
             bowler_type_map = {
-                'RA Pace':   ['RF','RFM','RMF','RM'],
-                'LA Pace':   ['LF','LMF','LM'],
+                'RA Pace':   ['RF','RFM','RM'],
+                'LA Pace':   ['LF','LFM','LM'],
                 'Off-Break': ['ROB','OB'],
                 'Leg-Break': ['RLB','LB'],
-                'LA Spin':   ['LOB','LSB','SLA'],
+                'LA Spin':   ['LOB','LLB','SLA'],
             }
 
             bt_labels, bt_runs, bt_sr_vals, bt_chips = [], [], [], []
